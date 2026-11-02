@@ -1,0 +1,895 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Configure Telegram Stremio Addon</title>
+  <style>
+    :root {
+      --bg: #0b0c10;
+      --card-bg: #15171e;
+      --card-border: #232733;
+      --accent: #e50914;
+      --accent-hover: #f40612;
+      --text: #ffffff;
+      --text-muted: #8c92a4;
+      --input-bg: #1d202a;
+      --input-border: #2e3344;
+      --badge-channel: #3b82f6;
+      --badge-group: #10b981;
+      --badge-chat: #8b5cf6;
+      --success: #10b981;
+      --error: #ef4444;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 2.5rem 1rem;
+    }
+
+    .container {
+      width: 100%;
+      max-width: 680px;
+    }
+
+    .header {
+      text-align: center;
+      margin-bottom: 2rem;
+    }
+
+    .logo-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      background: rgba(229, 9, 20, 0.12);
+      color: var(--accent);
+      border: 1px solid rgba(229, 9, 20, 0.3);
+      padding: 0.35rem 0.85rem;
+      border-radius: 9999px;
+      font-size: 0.85rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 0.75rem;
+    }
+
+    .header h1 {
+      font-size: 2rem;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      margin-bottom: 0.5rem;
+    }
+
+    .header p {
+      color: var(--text-muted);
+      font-size: 0.95rem;
+    }
+
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 1rem;
+      padding: 1.75rem;
+      margin-bottom: 1.5rem;
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.4);
+    }
+
+    .card-title {
+      font-size: 1.15rem;
+      font-weight: 700;
+      margin-bottom: 0.35rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .card-subtitle {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      margin-bottom: 1.25rem;
+    }
+
+    .form-group {
+      margin-bottom: 1.15rem;
+    }
+
+    label {
+      display: block;
+      font-size: 0.85rem;
+      font-weight: 600;
+      margin-bottom: 0.4rem;
+      color: #d1d5db;
+    }
+
+    input[type="text"],
+    input[type="number"],
+    input[type="password"] {
+      width: 100%;
+      background: var(--input-bg);
+      border: 1px solid var(--input-border);
+      color: var(--text);
+      padding: 0.75rem 1rem;
+      border-radius: 0.6rem;
+      font-size: 0.95rem;
+      outline: none;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+
+    input:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(229, 9, 20, 0.2);
+    }
+
+    .input-row {
+      display: flex;
+      gap: 0.6rem;
+    }
+
+    .input-row input {
+      flex: 1;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+      font-weight: 700;
+      border-radius: 0.6rem;
+      cursor: pointer;
+      border: none;
+      transition: background-color 0.15s, transform 0.1s, opacity 0.15s;
+      padding: 0.75rem 1.25rem;
+      font-size: 0.95rem;
+      white-space: nowrap;
+    }
+
+    .btn:active {
+      transform: scale(0.98);
+    }
+
+    .btn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
+    .btn-primary {
+      background: var(--accent);
+      color: #fff;
+      width: 100%;
+    }
+
+    .btn-primary:hover:not(:disabled) {
+      background: var(--accent-hover);
+    }
+
+    .btn-secondary {
+      background: #2a2e3d;
+      color: #fff;
+    }
+
+    .btn-secondary:hover:not(:disabled) {
+      background: #363b4e;
+    }
+
+    .btn-success {
+      background: #059669;
+      color: #fff;
+    }
+
+    .btn-sm {
+      padding: 0.5rem 0.9rem;
+      font-size: 0.85rem;
+    }
+
+    /* Chats Selector Area */
+    .chats-container {
+      margin-top: 1rem;
+      border-top: 1px solid var(--card-border);
+      padding-top: 1.25rem;
+    }
+
+    .search-input {
+      margin-bottom: 0.85rem;
+    }
+
+    .info-notice {
+      background: rgba(59, 130, 246, 0.08);
+      border: 1px solid rgba(59, 130, 246, 0.25);
+      border-radius: 0.6rem;
+      padding: 0.85rem;
+      font-size: 0.85rem;
+      color: #93c5fd;
+      line-height: 1.4;
+      margin-bottom: 1rem;
+    }
+
+    .chats-list {
+      max-height: 280px;
+      overflow-y: auto;
+      border: 1px solid var(--card-border);
+      border-radius: 0.6rem;
+      background: #111319;
+    }
+
+    .chat-item {
+      display: flex;
+      align-items: center;
+      padding: 0.85rem 1rem;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+      cursor: pointer;
+      user-select: none;
+      transition: background 0.15s;
+    }
+
+    .chat-item:last-child {
+      border-bottom: none;
+    }
+
+    .chat-item:hover {
+      background: rgba(255, 255, 255, 0.03);
+    }
+
+    .chat-item input[type="checkbox"] {
+      width: 18px;
+      height: 18px;
+      accent-color: var(--accent);
+      cursor: pointer;
+      margin-right: 1rem;
+    }
+
+    .chat-info {
+      flex: 1;
+    }
+
+    .chat-title {
+      font-weight: 700;
+      font-size: 0.95rem;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .chat-meta {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      margin-top: 0.15rem;
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 0.15rem 0.45rem;
+      border-radius: 4px;
+      font-size: 0.7rem;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+
+    .badge-channel { background: rgba(59, 130, 246, 0.2); color: #60a5fa; }
+    .badge-group { background: rgba(16, 185, 129, 0.2); color: #34d399; }
+    .badge-chat { background: rgba(139, 92, 246, 0.2); color: #c084fc; }
+
+    .bottom-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-top: 1rem;
+      padding-top: 0.75rem;
+    }
+
+    .selection-count {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      font-weight: 600;
+    }
+
+    .status-msg {
+      padding: 0.85rem;
+      border-radius: 0.6rem;
+      font-size: 0.9rem;
+      font-weight: 600;
+      margin-bottom: 1.25rem;
+      display: none;
+    }
+    .status-success { background: rgba(16, 185, 129, 0.15); border: 1px solid #10b981; color: #34d399; }
+    .status-error { background: rgba(239, 68, 68, 0.15); border: 1px solid #ef4444; color: #f87171; }
+
+    .validation-hint {
+      font-size: 0.85rem;
+      margin-top: 0.4rem;
+      font-weight: 600;
+      display: none;
+    }
+    .hint-success { color: #34d399; }
+    .hint-error { color: #f87171; }
+
+    /* Success Install Modal/Screen */
+    .install-box {
+      background: #111319;
+      border: 1px solid #232733;
+      border-radius: 0.8rem;
+      padding: 1.5rem;
+      text-align: center;
+      display: none;
+      margin-top: 1.5rem;
+    }
+
+    .install-box h3 {
+      font-size: 1.25rem;
+      margin-bottom: 0.5rem;
+      color: #34d399;
+    }
+
+    .install-actions {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+      margin-top: 1.25rem;
+    }
+
+    .url-display {
+      background: #000;
+      padding: 0.6rem 0.85rem;
+      border-radius: 0.5rem;
+      font-family: monospace;
+      font-size: 0.85rem;
+      color: #9ca3af;
+      word-break: break-all;
+      user-select: all;
+    }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <div class="header">
+    <div class="logo-badge">Stremio Addon</div>
+    <h1>Telegram Library TV</h1>
+    <p>Direct bufferless video streaming with TMDB posters and metadata</p>
+  </div>
+
+  <div id="statusAlert" class="status-msg"></div>
+
+  <!-- Main Config Form -->
+  <div class="card">
+    <div class="card-title">
+      <span>1. Telegram Credentials</span>
+    </div>
+    <div class="card-subtitle">Connect your bot via Telegram MTProto (no phone login needed)</div>
+
+    <div class="form-group">
+      <label for="apiId">Telegram API ID</label>
+      <input type="number" id="apiId" placeholder="e.g. 12345678">
+    </div>
+
+    <div class="form-group">
+      <label for="apiHash">Telegram API Hash</label>
+      <input type="text" id="apiHash" placeholder="32-character hex from my.telegram.org">
+    </div>
+
+    <div class="form-group">
+      <label for="botToken">Telegram Bot Token</label>
+      <input type="text" id="botToken" placeholder="From @BotFather (e.g. 123456789:ABC...)">
+    </div>
+
+    <button type="button" id="btnFetchChats" class="btn btn-secondary" style="width: 100%;">
+      🔄 Connect & Fetch Available Chats
+    </button>
+
+    <!-- Chats Selection Area (Matching TGTV UI) -->
+    <div id="chatsArea" class="chats-container" style="display: none;">
+      <div class="card-title">
+        <span>Choose Chats</span>
+      </div>
+      <div class="card-subtitle">Pick the chats and channels to scan for movies and series.</div>
+
+      <!-- Quick Add Channel / Group Input -->
+      <label for="directChannelInput">Add Channel by ID or @Username</label>
+      <div class="input-row" style="margin-bottom: 0.85rem;">
+        <input type="text" id="directChannelInput" placeholder="Channel ID (e.g. -1001987654321) or @channel_username">
+        <button type="button" id="btnDirectAddChannel" class="btn btn-secondary">➕ Add Channel</button>
+      </div>
+
+      <input type="text" id="chatSearch" class="search-input" placeholder="Filter chats by name...">
+
+      <div class="info-notice">
+        ℹ️ Bots can only see chats they've interacted with. If your channel is not listed above:
+        <br>1. Make sure your bot is an <b>Admin</b> in the channel.
+        <br>2. Type the Channel ID (e.g. <code>-100...</code>) in the box above and click <b>Add Channel</b>.
+        <br>3. Or simply forward any message/video from your channel to the bot in Telegram!
+      </div>
+
+      <div class="info-notice" style="background: rgba(59, 130, 246, 0.1); border-left-color: #3b82f6; margin-top: 0.75rem;">
+        💡 <b>How to index videos posted before the bot was added:</b>
+        <br>Telegram servers forbid any bot from reading messages sent <i>prior</i> to when the bot joined the channel.
+        <br>👉 <b>Instant 10-second fix:</b> In Telegram, select your older movie posts and <b>Forward</b> them back into the channel (or forward to the Bot DM). They will receive fresh timestamps and get indexed immediately with full TMDB posters!
+        <br>👉 <b>Full auto-history mode:</b> Run <code>docker compose exec stremio-addon python login_user.py</code> in your terminal to pair your personal account (just like TGTV's phone pairing).
+      </div>
+
+      <div id="chatsList" class="chats-list">
+        <!-- Chat items inserted via JS -->
+      </div>
+
+      <div class="bottom-bar">
+        <span id="selectedCount" class="selection-count">0 selected</span>
+        <button type="button" id="btnRefreshChats" class="btn btn-secondary btn-sm">🔄 Refresh List</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">
+      <span>2. TheMovieDatabase (TMDB) Integration</span>
+    </div>
+    <div class="card-subtitle">Required to fetch official movie posters, cast, synopsis, and match IMDb IDs</div>
+
+    <div class="form-group">
+      <label for="tmdbKey">TMDB API Key (v3 Read Key)</label>
+      <div class="input-row">
+        <input type="text" id="tmdbKey" placeholder="32-character API key from themoviedb.org">
+        <button type="button" id="btnVerifyTmdb" class="btn btn-secondary">🔍 Verify Key</button>
+      </div>
+      <div id="tmdbStatus" class="validation-hint"></div>
+    </div>
+  </div>
+
+  <button type="button" id="btnSaveAll" class="btn btn-primary" style="padding: 1rem; font-size: 1.05rem;">
+    💾 Save Configuration & Enable Addon
+  </button>
+
+  <!-- Install in Stremio Panel -->
+  <div id="installBox" class="install-box">
+    <h3>🎉 Addon Configured Successfully!</h3>
+    <p style="color: var(--text-muted); font-size: 0.9rem; margin-top: 0.35rem;">
+      Your Telegram library is now connected. Click below to install into Stremio:
+    </p>
+
+    <div class="install-actions">
+      <a id="stremioProtocolLink" href="#" class="btn btn-primary" style="text-decoration: none;">
+        🚀 Install to Stremio (1-Click)
+      </a>
+      
+      <p style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.25rem;">Or copy manifest URL to paste into Stremio search:</p>
+      <div id="manifestUrlText" class="url-display"></div>
+      <button type="button" id="btnCopyUrl" class="btn btn-secondary btn-sm">📋 Copy Manifest Link</button>
+
+      <div style="margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid #232733; display: flex; align-items: center; justify-content: space-between;">
+        <span id="libraryStatsLabel" style="font-size: 0.85rem; color: var(--text-muted);">Library: checking...</span>
+        <button type="button" id="btnRescanLibrary" class="btn btn-secondary btn-sm">🔄 Clean & Re-Index Library</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  let discoveredChats = [];
+  let selectedChatIds = new Set();
+  let publicUrl = "";
+  let isTmdbVerified = false;
+
+  const alertBox = document.getElementById("statusAlert");
+  const tmdbStatusBox = document.getElementById("tmdbStatus");
+  const btnVerifyTmdb = document.getElementById("btnVerifyTmdb");
+
+  function showAlert(msg, isError = false) {
+    alertBox.textContent = msg;
+    alertBox.className = "status-msg " + (isError ? "status-error" : "status-success");
+    alertBox.style.display = "block";
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  // Load existing configuration on start
+  async function loadExistingConfig() {
+    try {
+      const res = await fetch("/api/config");
+      const data = await res.json();
+      publicUrl = data.public_url || window.location.origin;
+
+      if (data.api_id) document.getElementById("apiId").value = data.api_id;
+      if (data.api_hash) document.getElementById("apiHash").value = data.api_hash;
+      if (data.bot_token) document.getElementById("botToken").value = data.bot_token;
+      if (data.tmdb_api_key) {
+        document.getElementById("tmdbKey").value = data.tmdb_api_key;
+        // Verify stored TMDB key
+        verifyTmdbKey(true);
+      }
+
+      if (data.channel_ids && data.channel_ids.length > 0) {
+        data.channel_ids.forEach(id => selectedChatIds.add(Number(id)));
+      }
+
+      // If bot token is already available (from .env or previous save), auto-fetch channels!
+      if (data.bot_token) {
+        fetchChats();
+      }
+
+      if (data.configured) {
+        showInstallBox();
+      }
+    } catch (e) {
+      console.log("No previous config loaded.");
+    }
+  }
+
+  // Fetch chats from Telegram Bot
+  async function fetchChats() {
+    const botToken = document.getElementById("botToken").value.trim();
+    if (!botToken) {
+      showAlert("Please enter your Telegram Bot Token first.", true);
+      return;
+    }
+
+    const btn = document.getElementById("btnFetchChats");
+    btn.disabled = true;
+    btn.textContent = "⏳ Fetching Chats from Telegram...";
+
+    try {
+      const res = await fetch("/api/fetch-chats", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ bot_token: botToken })
+      });
+      const data = await res.json();
+
+      if (data.error) {
+        showAlert(data.error, true);
+        return;
+      }
+
+      const fetched = data.chats || [];
+      // Merge with discoveredChats avoiding duplicates
+      fetched.forEach(fc => {
+        if (!discoveredChats.some(c => c.id === fc.id)) {
+          discoveredChats.push(fc);
+        }
+      });
+      
+      // Keep previously selected chats in list
+      selectedChatIds.forEach(id => {
+        if (!discoveredChats.some(c => c.id === id)) {
+          discoveredChats.push({
+            id: id,
+            title: `Channel ${id}`,
+            type: "Channel"
+          });
+        }
+      });
+
+      renderChats();
+      document.getElementById("chatsArea").style.display = "block";
+      
+      if (discoveredChats.length > 0) {
+        showAlert(`Connected to @${data.bot.username || data.bot.name}! Found ${discoveredChats.length} chat(s).`);
+      } else {
+        showAlert(`Connected to @${data.bot.username || data.bot.name}! Add your channel ID below to monitor it.`, false);
+      }
+    } catch (err) {
+      showAlert("Network error fetching chats: " + err.message, true);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "🔄 Connect & Fetch Available Chats";
+    }
+  }
+
+  // Direct Channel / Chat Lookup via API
+  async function lookupAndAddChannel() {
+    const botToken = document.getElementById("botToken").value.trim();
+    const channelInput = document.getElementById("directChannelInput").value.trim();
+
+    if (!botToken) {
+      showAlert("Please enter your Telegram Bot Token first.", true);
+      return;
+    }
+    if (!channelInput) {
+      showAlert("Please enter a Channel ID (e.g. -1001987654321) or @username.", true);
+      return;
+    }
+
+    const addBtn = document.getElementById("btnDirectAddChannel");
+    addBtn.disabled = true;
+    addBtn.textContent = "⏳ Checking...";
+
+    try {
+      const res = await fetch("/api/lookup-chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          bot_token: botToken,
+          chat_identifier: channelInput
+        })
+      });
+      const data = await res.json();
+
+      if (data.error) {
+        showAlert(data.error, true);
+        return;
+      }
+
+      // Add to discovered chats
+      const existingIdx = discoveredChats.findIndex(c => c.id === data.id);
+      if (existingIdx >= 0) {
+        discoveredChats[existingIdx] = data;
+      } else {
+        discoveredChats.unshift(data);
+      }
+
+      // Automatically select it!
+      selectedChatIds.add(Number(data.id));
+      document.getElementById("directChannelInput").value = "";
+      renderChats();
+      showAlert(`✓ Successfully added and selected "${data.title}" (${data.type})!`);
+    } catch (err) {
+      showAlert("Failed to verify channel: " + err.message, true);
+    } finally {
+      addBtn.disabled = false;
+      addBtn.textContent = "➕ Add Channel";
+    }
+  }
+
+  function renderChats() {
+    const list = document.getElementById("chatsList");
+    const filter = document.getElementById("chatSearch").value.toLowerCase();
+    list.innerHTML = "";
+
+    const filtered = discoveredChats.filter(c => c.title.toLowerCase().includes(filter));
+
+    if (filtered.length === 0) {
+      list.innerHTML = `<div style="padding: 1.5rem; text-align: center; color: var(--text-muted); font-size: 0.9rem;">
+        No chats found in update history.<br>
+        Enter your <b>Channel ID (-100...)</b> above, or forward any message from your channel to the bot in Telegram!
+      </div>`;
+      return;
+    }
+
+    filtered.forEach(chat => {
+      const isChecked = selectedChatIds.has(Number(chat.id));
+      const div = document.createElement("div");
+      div.className = "chat-item";
+      
+      let badgeClass = "badge-chat";
+      if (chat.type === "Channel") badgeClass = "badge-channel";
+      else if (chat.type === "Group") badgeClass = "badge-group";
+
+      div.innerHTML = `
+        <input type="checkbox" id="chk_${chat.id}" ${isChecked ? "checked" : ""}>
+        <div class="chat-info">
+          <div class="chat-title">
+            <span>${escapeHtml(chat.title)}</span>
+            <span class="badge ${badgeClass}">${chat.type}</span>
+          </div>
+          <div class="chat-meta">ID: ${chat.id}</div>
+        </div>
+      `;
+
+      div.addEventListener("click", (e) => {
+        if (e.target.tagName !== "INPUT") {
+          const chk = div.querySelector("input[type='checkbox']");
+          chk.checked = !chk.checked;
+        }
+        const chk = div.querySelector("input[type='checkbox']");
+        if (chk.checked) {
+          selectedChatIds.add(Number(chat.id));
+        } else {
+          selectedChatIds.delete(Number(chat.id));
+        }
+        updateSelectionCount();
+      });
+
+      list.appendChild(div);
+    });
+
+    updateSelectionCount();
+  }
+
+  function updateSelectionCount() {
+    document.getElementById("selectedCount").textContent = `${selectedChatIds.size} selected`;
+  }
+
+  function escapeHtml(str) {
+    return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+
+  // TMDB Verification Logic
+  async function verifyTmdbKey(silent = false) {
+    const key = document.getElementById("tmdbKey").value.trim();
+    if (!key) {
+      if (!silent) showAlert("Please enter your TMDB API Key first.", true);
+      return false;
+    }
+
+    btnVerifyTmdb.disabled = true;
+    btnVerifyTmdb.textContent = "⏳ Verifying...";
+    tmdbStatusBox.style.display = "none";
+
+    try {
+      const res = await fetch("/api/verify-tmdb", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ api_key: key })
+      });
+      const data = await res.json();
+
+      if (data.valid) {
+        isTmdbVerified = true;
+        tmdbStatusBox.textContent = "✓ TMDB API Key verified successfully! Posters and metadata enabled.";
+        tmdbStatusBox.className = "validation-hint hint-success";
+        tmdbStatusBox.style.display = "block";
+        btnVerifyTmdb.textContent = "✓ Verified";
+        btnVerifyTmdb.className = "btn btn-success";
+        return true;
+      } else {
+        isTmdbVerified = false;
+        tmdbStatusBox.textContent = `✗ ${data.message || "Invalid TMDB API Key."}`;
+        tmdbStatusBox.className = "validation-hint hint-error";
+        tmdbStatusBox.style.display = "block";
+        btnVerifyTmdb.textContent = "🔍 Verify Key";
+        btnVerifyTmdb.className = "btn btn-secondary";
+        return false;
+      }
+    } catch (e) {
+      isTmdbVerified = false;
+      tmdbStatusBox.textContent = "✗ Connection failed while verifying TMDB key.";
+      tmdbStatusBox.className = "validation-hint hint-error";
+      tmdbStatusBox.style.display = "block";
+      btnVerifyTmdb.textContent = "🔍 Verify Key";
+      btnVerifyTmdb.className = "btn btn-secondary";
+      return false;
+    } finally {
+      btnVerifyTmdb.disabled = false;
+    }
+  }
+
+  // Reset verification when user alters the TMDB input
+  document.getElementById("tmdbKey").addEventListener("input", () => {
+    isTmdbVerified = false;
+    btnVerifyTmdb.textContent = "🔍 Verify Key";
+    btnVerifyTmdb.className = "btn btn-secondary";
+    tmdbStatusBox.style.display = "none";
+  });
+
+  // Save full configuration
+  async function saveConfig() {
+    const apiId = document.getElementById("apiId").value.trim();
+    const apiHash = document.getElementById("apiHash").value.trim();
+    const botToken = document.getElementById("botToken").value.trim();
+    const tmdbKey = document.getElementById("tmdbKey").value.trim();
+
+    if (!apiId || !apiHash || !botToken) {
+      showAlert("Please enter API ID, API Hash, and Bot Token.", true);
+      return;
+    }
+
+    if (selectedChatIds.size === 0) {
+      showAlert("Please select at least one channel to scan for videos.", true);
+      return;
+    }
+
+    // TMDB Key must be verified if provided
+    if (tmdbKey && !isTmdbVerified) {
+      const verified = await verifyTmdbKey(false);
+      if (!verified) {
+        showAlert("Please verify your TMDB API Key before proceeding.", true);
+        return;
+      }
+    }
+
+    const payload = {
+      api_id: parseInt(apiId),
+      api_hash: apiHash,
+      bot_token: botToken,
+      tmdb_api_key: tmdbKey,
+      channel_ids: Array.from(selectedChatIds)
+    };
+
+    const saveBtn = document.getElementById("btnSaveAll");
+    saveBtn.disabled = true;
+    saveBtn.textContent = "⏳ Saving and Initializing Addon...";
+
+    try {
+      const res = await fetch("/api/save-config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+
+      if (data.error) {
+        showAlert(data.error, true);
+        saveBtn.disabled = false;
+        saveBtn.textContent = "💾 Save Configuration & Enable Addon";
+        return;
+      }
+
+      showAlert("✅ Configuration saved! Telegram client connected and scanning library.");
+      showInstallBox();
+    } catch (e) {
+      showAlert("Error saving settings: " + e.message, true);
+    } finally {
+      saveBtn.disabled = false;
+      saveBtn.textContent = "💾 Save Configuration & Enable Addon";
+    }
+  }
+
+  async function updateLibraryStats() {
+    try {
+      const res = await fetch("/stats");
+      const d = await res.json();
+      const el = document.getElementById("libraryStatsLabel");
+      if (el) {
+        el.textContent = `Library: ${d.movies || 0} movies, ${d.series_episodes || 0} episodes indexed`;
+      }
+    } catch (e) {}
+  }
+
+  function showInstallBox() {
+    const manifestUrl = (publicUrl || window.location.origin) + "/manifest.json";
+    const stremioProtocol = manifestUrl.replace(/^https?:\/\//, "stremio://");
+
+    document.getElementById("stremioProtocolLink").href = stremioProtocol;
+    document.getElementById("manifestUrlText").textContent = manifestUrl;
+    document.getElementById("installBox").style.display = "block";
+    document.getElementById("installBox").scrollIntoView({ behavior: "smooth" });
+    updateLibraryStats();
+  }
+
+  // Event Listeners
+  document.getElementById("btnFetchChats").addEventListener("click", fetchChats);
+  document.getElementById("btnRefreshChats").addEventListener("click", fetchChats);
+  document.getElementById("btnDirectAddChannel").addEventListener("click", lookupAndAddChannel);
+  document.getElementById("directChannelInput").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      lookupAndAddChannel();
+    }
+  });
+  document.getElementById("btnVerifyTmdb").addEventListener("click", () => verifyTmdbKey(false));
+  document.getElementById("btnSaveAll").addEventListener("click", saveConfig);
+  document.getElementById("chatSearch").addEventListener("input", renderChats);
+
+  document.getElementById("btnRescanLibrary").addEventListener("click", async () => {
+    const btn = document.getElementById("btnRescanLibrary");
+    btn.disabled = true;
+    btn.textContent = "⏳ Re-indexing Library...";
+    try {
+      await fetch("/rescan", { method: "POST" });
+      showAlert("🔄 Library wipe and fresh re-indexing started in background! TMDB metadata and posters are updating.");
+      setTimeout(updateLibraryStats, 4000);
+    } catch (e) {
+      showAlert("Failed to start re-scan: " + e.message, true);
+    } finally {
+      setTimeout(() => {
+        btn.disabled = false;
+        btn.textContent = "🔄 Clean & Re-Index Library";
+      }, 5000);
+    }
+  });
+
+  document.getElementById("btnCopyUrl").addEventListener("click", () => {
+    const text = document.getElementById("manifestUrlText").textContent;
+    navigator.clipboard.writeText(text).then(() => {
+      document.getElementById("btnCopyUrl").textContent = "✓ Copied to Clipboard!";
+      setTimeout(() => {
+        document.getElementById("btnCopyUrl").textContent = "📋 Copy Manifest Link";
+      }, 2500);
+    });
+  });
+
+  // Init
+  loadExistingConfig();
+</script>
+
+</body>
+</html>

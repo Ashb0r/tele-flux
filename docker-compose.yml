@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  stremio-telegram-addon:
+    build: .
+    container_name: stremio-telegram-addon
+    restart: unless-stopped
+    ports:
+      - "${SERVER_PORT:-7000}:7000"
+    volumes:
+      # All persistent data (SQLite library, settings.json, Telegram session) lives in ./data
+      - ./data:/app/data
+    env_file:
+      - .env
+    environment:
+      - PYTHONUNBUFFERED=1
+      - DATA_DIR=/app/data
