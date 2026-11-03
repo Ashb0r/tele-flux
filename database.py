@@ -477,54 +477,44 @@ async def reconcile_library():
                     await db.commit()
                     print(f"[Library Healed Movie] #{vid_id} '{fn}' -> '{hit['title']}' ({hit.get('year')}) [IMDb: {hit.get('imdb_id')}]")
 
-        # 3. Heal any movie where the assigned title or language doesn't match the filename/caption
-        # (e.g. 'The Handmaiden' misassigned to 'The Dark Knight', or 'Beast (Tamil)' assigned to 'Beast (English)')
-        cur_all_movies = await db.execute("SELECT id, file_name, title, media_type, tmdb_id, imdb_id FROM videos WHERE media_type = 'movie'")
+        # 3. Heal any movie where TMDB resolves to a more accurate metadata match
+        # (e.g. 'Fly Girls (2010)' exact year vs undated documentary, 'The Handmaiden', 'Pirates II', 'Beast')
+        cur_all_movies = await db.execute("SELECT id, file_name, title, media_type, tmdb_id, imdb_id, year FROM videos WHERE media_type = 'movie'")
         all_movies = await cur_all_movies.fetchall()
 
         if all_movies:
-            from tmdb import lookup_tmdb, parse_filename, normalize_title, strip_article, format_stremio_stream, extract_media_specs
+            from tmdb import lookup_tmdb, parse_filename, format_stremio_stream, extract_media_specs
             for mrow in all_movies:
                 fn = mrow["file_name"]
-                curr_title = mrow["title"]
                 curr_tmdb_id = mrow["tmdb_id"]
                 vid_id = mrow["id"]
                 parsed = parse_filename(fn)
-                clean_parsed_title = parsed.get("raw_title", "")
-                
-                # Check if current title is misaligned with the parsed title
-                norm_curr = normalize_title(strip_article(curr_title))
-                norm_parsed = normalize_title(strip_article(clean_parsed_title))
-                
-                is_misaligned = norm_curr and norm_parsed and (norm_curr not in norm_parsed and norm_parsed not in norm_curr)
-                has_lang_tag = bool(parsed.get("language"))
 
-                if is_misaligned or has_lang_tag:
-                    hit = await lookup_tmdb(fn, parsed_override=parsed)
-                    if hit and hit.get("tmdb_id") and hit["tmdb_id"] != curr_tmdb_id:
-                        print(f"[Library Healing] Disambiguated #{vid_id} '{fn}': TMDB {curr_tmdb_id} -> '{hit['title']}' (TMDB: {hit['tmdb_id']}, IMDb: {hit.get('imdb_id')})")
-                        y_str = f" ({hit['year']})" if hit.get("year") else ""
-                        header = f"{hit['title']}{y_str}"
-                        specs = extract_media_specs(fn)
-                        badge, desc = format_stremio_stream(header, specs)
-                        await db.execute("""
-                            UPDATE videos SET
-                                tmdb_id = ?,
-                                imdb_id = ?,
-                                title = ?,
-                                year = ?,
-                                poster = ?,
-                                backdrop = ?,
-                                overview = ?,
-                                rating = ?,
-                                genres = ?,
-                                stream_badge = ?,
-                                stream_desc = ?
-                            WHERE id = ?
-                        """, (
-                            hit["tmdb_id"], hit.get("imdb_id"), hit["title"], hit.get("year"),
-                            hit["poster"], hit.get("backdrop"), hit.get("overview"),
-                            hit.get("rating"), ",".join(hit.get("genres", [])) if isinstance(hit.get("genres"), list) else hit.get("genres"),
-                            badge, desc, vid_id
-                        ))
-                        await db.commit()
+                hit = await lookup_tmdb(fn, parsed_override=parsed)
+                if hit and hit.get("tmdb_id") and hit["tmdb_id"] != curr_tmdb_id:
+                    print(f"[Library Healing] Disambiguated #{vid_id} '{fn}': TMDB {curr_tmdb_id} -> '{hit['title']}' (TMDB: {hit['tmdb_id']}, IMDb: {hit.get('imdb_id')})")
+                    y_str = f" ({hit['year']})" if hit.get("year") else ""
+                    header = f"{hit['title']}{y_str}"
+                    specs = extract_media_specs(fn)
+                    badge, desc = format_stremio_stream(header, specs)
+                    await db.execute("""
+                        UPDATE videos SET
+                            tmdb_id = ?,
+                            imdb_id = ?,
+                            title = ?,
+                            year = ?,
+                            poster = ?,
+                            backdrop = ?,
+                            overview = ?,
+                            rating = ?,
+                            genres = ?,
+                            stream_badge = ?,
+                            stream_desc = ?
+                        WHERE id = ?
+                    """, (
+                        hit["tmdb_id"], hit.get("imdb_id"), hit["title"], hit.get("year"),
+                        hit["poster"], hit.get("backdrop"), hit.get("overview"),
+                        hit.get("rating"), ",".join(hit.get("genres", [])) if isinstance(hit.get("genres"), list) else hit.get("genres"),
+                        badge, desc, vid_id
+                    ))
+                    await db.commit()

@@ -25,7 +25,10 @@ SEASON_EPISODE_PATTERNS = [
 ]
 
 # Strips channel tags, bots, watermarks, sites at start of filename: [MM], [TR_HDS], @channel, www.site.com
-CHANNEL_TAG_REGEX = re.compile(r'^(?:(?:\[.*?\]|\(.*?\)|@[\w_]+|www\.\S+[\s._-]*)[\s._-]*)+')
+CHANNEL_TAG_REGEX = re.compile(
+    r'^(?:(?:\[.*?\]|\(.*?\)|@[\w_]+(?:\s+(?:ALL\s+)?(?:MOVIES\d*|FILMS|CHANNELS?|OFFICIAL|HUB|MEDIA|BOT|GROUP|LINKS|CORNER|WORLD|ZONE|HD|HQ)\b)?|www\.\S+[\s._-]*)[\s._-]*)+',
+    re.IGNORECASE
+)
 URL_WATERMARK_REGEX = re.compile(r'(?i)\b(?:https?://\S+|www\.\S+|t\.me/\S+|@[a-zA-Z0-9_]+)\b')
 YEAR_REGEX = re.compile(r'\b(19\d{2}|20\d{2})\b')
 YEAR_BRACKET_REGEX = re.compile(r'\s*[\(\[]\s*(19\d{2}|20\d{2})\s*[\)\]]')
@@ -198,23 +201,51 @@ def choose_best_tmdb_hit(results: list[dict], query: str, year: int | None, file
     if not name_matches:
         return None
 
-    if len(name_matches) == 1:
-        return name_matches[0]
-
     pool = name_matches
 
-    # If multiple match the name, filter by year
+    # If release year was provided, strictly prioritize candidates with matching release year
     if year:
-        year_matches = []
+        # Tier 1: Exact or ±1 year release match
+        exact_year_matches = []
         for item in pool:
             d = (item.get("first_air_date" if media_type == "series" else "release_date") or "").strip()
             item_yr = int(d[:4]) if len(d) >= 4 and d[:4].isdigit() else None
             if item_yr and abs(item_yr - year) <= 1:
-                year_matches.append(item)
-        if year_matches:
-            pool = year_matches
+                exact_year_matches.append(item)
+
+        if exact_year_matches:
+            pool = exact_year_matches
             if len(pool) == 1:
                 return pool[0]
+        else:
+            # Tier 2: Within ±2 years margin (e.g. film festival premiere vs general release)
+            margin2_matches = []
+            for item in pool:
+                d = (item.get("first_air_date" if media_type == "series" else "release_date") or "").strip()
+                item_yr = int(d[:4]) if len(d) >= 4 and d[:4].isdigit() else None
+                if item_yr and abs(item_yr - year) <= 2:
+                    margin2_matches.append(item)
+
+            if margin2_matches:
+                pool = margin2_matches
+                if len(pool) == 1:
+                    return pool[0]
+            else:
+                # Tier 3: Only if NO candidate has a release date within ±2 years,
+                # fallback to candidates with unannounced / missing release dates
+                no_date_matches = [
+                    item for item in pool
+                    if not (item.get("first_air_date" if media_type == "series" else "release_date") or "").strip()[:4].isdigit()
+                ]
+                if no_date_matches:
+                    pool = no_date_matches
+                    if len(pool) == 1:
+                        return pool[0]
+                else:
+                    # Release year mismatch by > 2 years (e.g. 1986 vs 2008). Reject!
+                    return None
+    elif len(pool) == 1:
+        return pool[0]
 
     # If multiple still match the same name and year (wall hit!), disambiguate by language
     if file_lang:
@@ -910,7 +941,7 @@ async def execute_tmdb_search(client: httpx.AsyncClient, api_key: str, query: st
     params = {
         "api_key": api_key,
         "query": query,
-        "include_adult": "false"
+        "include_adult": "true"
     }
 
     all_results = []
@@ -942,7 +973,7 @@ async def execute_tmdb_search(client: httpx.AsyncClient, api_key: str, query: st
     # Fallback to multi-search ONLY filtering for the exact requested media_type
     if not results:
         multi_url = "https://api.themoviedb.org/3/search/multi"
-        mdata = await tmdb_get_with_retry(client, multi_url, {"api_key": api_key, "query": query, "include_adult": "false"})
+        mdata = await tmdb_get_with_retry(client, multi_url, {"api_key": api_key, "query": query, "include_adult": "true"})
         if mdata:
             target_raw = "tv" if media_type == "series" else "movie"
             for item in mdata.get("results", []):
