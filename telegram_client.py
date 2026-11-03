@@ -14,7 +14,7 @@ from telethon.tl.types import (
 from telethon.errors import FloodWaitError
 from config import DATA_DIR, CHUNK_SIZE_BYTES
 from database import upsert_video
-from tmdb import lookup_tmdb
+from tmdb import lookup_tmdb, parse_filename, extract_media_specs, format_stremio_stream
 from settings_manager import load_settings
 
 VIDEO_EXTENSIONS = (
@@ -204,86 +204,168 @@ async def discover_bot_chats(bot_token: str) -> dict:
     except Exception as e:
         return {"error": f"Failed to connect to Telegram: {str(e)}"}
 
-def extract_video_metadata(message):
+def extract_video_metadata(message) -> dict | None:
     """
     Universal video extractor:
     - Extracts from native video or document
-    - Supports captions when file_name is missing/generic (TGTV style)
-    - Checks MIME types & all video extensions
+    - Reads video dimensions (w, h) and duration
+    - Checks captions & file names
+    - Parses series/episode indicators and technical specifications
     """
-    if not message or not message.media:
+    try:
+        if not message or not message.media:
+            return None
+
+        doc = getattr(message.media, "document", None)
+        if not doc and hasattr(message, "video") and message.video:
+            doc = message.video
+
+        if not doc:
+            return None
+
+        file_name = None
+        is_video = False
+        video_attr = None
+
+        mime = (getattr(doc, "mime_type", "") or "").lower()
+        if any(mime.startswith(vm) for vm in VIDEO_MIMES):
+            is_video = True
+
+        if hasattr(doc, "attributes") and doc.attributes:
+            for attr in doc.attributes:
+                if isinstance(attr, DocumentAttributeFilename):
+                    file_name = attr.file_name
+                elif isinstance(attr, DocumentAttributeVideo):
+                    is_video = True
+                    video_attr = {
+                        "w": getattr(attr, "w", 0),
+                        "h": getattr(attr, "h", 0),
+                        "duration": getattr(attr, "duration", 0)
+                    }
+
+        # Fallback to Telethon message.file property
+        if not file_name and hasattr(message, "file") and message.file and message.file.name:
+            file_name = message.file.name
+
+        if file_name and file_name.lower().endswith(VIDEO_EXTENSIONS):
+            is_video = True
+
+        if not is_video:
+            return None
+
+        caption = (message.message or message.raw_text or "").strip()
+
+        actual_file_name = file_name
+        if not actual_file_name:
+            # Check if caption contains a recognizable title line or filename
+            if caption:
+                import re
+                from tmdb import JUNK_LINE_REGEX
+                for line in caption.split("\n"):
+                    line = line.strip()
+                    if not line or JUNK_LINE_REGEX.match(line):
+                        continue
+                    # If line ends with an extension or ' mkv'/' mp4', format it as filename
+                    cand = re.sub(r'(?i)\s+(mkv|mp4|avi|mov|webm|ts)$', r'.\1', line)
+                    if not any(cand.lower().endswith(ext) for ext in VIDEO_EXTENSIONS):
+                        cand = f"{cand}.mp4"
+                    # Strip characters invalid in filenames: / \ : * ? " < > |
+                    cand = re.sub(r'[\\/:*?"<>|]+', ' ', cand)
+                    cand = re.sub(r'\s+', ' ', cand).strip()
+                    if len(cand) >= 5:
+                        actual_file_name = cand
+                        break
+            if not actual_file_name:
+                actual_file_name = f"video_{message.id}.mp4"
+
+        # Full text corpus containing all metadata tokens
+        text_corpus = f"{actual_file_name}\n{caption}"
+
+        # Parse TV series vs Movie
+        parsed = parse_filename(file_name=actual_file_name, caption=caption)
+
+        # Extract deep technical specifications (resolution, codec, audio, flags)
+        specs = extract_media_specs(text_corpus, file_size=doc.size, video_attr=video_attr)
+
+        return {
+            "file_name": actual_file_name,
+            "caption": caption,
+            "file_size": doc.size,
+            "mime_type": mime if mime.startswith("video/") else "video/mp4",
+            "document": doc,
+            "parsed": parsed,
+            "specs": specs,
+            "video_attr": video_attr
+        }
+    except Exception as e:
+        print(f"[Video Extraction Error] Message #{getattr(message, 'id', '?')}: {e}")
         return None
-
-    doc = getattr(message.media, "document", None)
-    if not doc and hasattr(message, "video") and message.video:
-        doc = message.video
-
-    if not doc:
-        return None
-
-    file_name = None
-    is_video = False
-
-    mime = (getattr(doc, "mime_type", "") or "").lower()
-    if any(mime.startswith(vm) for vm in VIDEO_MIMES):
-        is_video = True
-
-    if hasattr(doc, "attributes") and doc.attributes:
-        for attr in doc.attributes:
-            if isinstance(attr, DocumentAttributeFilename):
-                file_name = attr.file_name
-            elif isinstance(attr, DocumentAttributeVideo):
-                is_video = True
-
-    # Fallback to Telethon message.file property
-    if not file_name and hasattr(message, "file") and message.file and message.file.name:
-        file_name = message.file.name
-
-    if file_name and file_name.lower().endswith(VIDEO_EXTENSIONS):
-        is_video = True
-
-    if not is_video:
-        return None
-
-    # TGTV trick: If caption exists, caption has the real movie name!
-    caption = (message.message or message.raw_text or "").strip()
-    if caption:
-        # Take first line of caption
-        caption_title = caption.split("\n")[0].strip()
-        search_title = caption_title
-    else:
-        search_title = file_name or f"video_{message.id}.mp4"
-
-    return {
-        "file_name": search_title,
-        "actual_file_name": file_name or f"video_{message.id}.mp4",
-        "file_size": doc.size,
-        "mime_type": mime if mime.startswith("video/") else "video/mp4",
-        "document": doc
-    }
 
 async def index_single_message(chat_id: int, message):
     meta = extract_video_metadata(message)
     if not meta:
         return False
 
-    # Lookup TMDB using the best available title (filename or caption)
-    tmdb_info = await lookup_tmdb(meta["file_name"])
-    await upsert_video(
-        chat_id=chat_id,
-        message_id=message.id,
-        file_name=meta["actual_file_name"],
-        file_size=meta["file_size"],
-        mime_type=meta["mime_type"],
-        tmdb_info=tmdb_info
-    )
+    parsed = meta["parsed"]
+    specs = meta["specs"]
+
+    # If TV Series, pre-populate series cache from database if another episode was already indexed
+    if parsed.get("media_type") == "series":
+        from tmdb import get_series_cache, set_series_cache
+        from database import get_series_master_metadata
+        if not get_series_cache(parsed["raw_title"]):
+            master = await get_series_master_metadata(parsed["raw_title"])
+            if master:
+                set_series_cache(parsed["raw_title"], master)
+                set_series_cache(master["title"], master)
+
+    # Lookup TMDB using parsed information and filename/caption
+    tmdb_info = await lookup_tmdb(meta["file_name"], meta["caption"], parsed_override=parsed)
+
+    # Determine header for Stremio stream card
     if tmdb_info.get("media_type") == "series":
         s = tmdb_info.get("season") or 1
         e = tmdb_info.get("episode") or 1
         ep_t = tmdb_info.get("episode_title") or f"Episode {e}"
-        print(f"[Indexed Series] #{message.id}: {meta['file_name']} -> {tmdb_info['title']} S{s:02d}E{e:02d} ({ep_t}) [TMDB: {tmdb_info.get('tmdb_id')}, IMDb: {tmdb_info.get('imdb_id')}]")
+        header = f"{tmdb_info['title']} - S{s:02d}E{e:02d} - {ep_t}"
     else:
-        print(f"[Indexed Movie] #{message.id}: {meta['file_name']} -> {tmdb_info['title']} ({tmdb_info.get('year')}) [TMDB: {tmdb_info.get('tmdb_id')}, IMDb: {tmdb_info.get('imdb_id')}]")
+        y_str = f" ({tmdb_info['year']})" if tmdb_info.get("year") else ""
+        header = f"{tmdb_info['title']}{y_str}"
+
+    badge, desc = format_stremio_stream(header, specs)
+
+    await upsert_video(
+        chat_id=chat_id,
+        message_id=message.id,
+        file_name=meta["file_name"],
+        file_size=meta["file_size"],
+        mime_type=meta["mime_type"],
+        tmdb_info=tmdb_info,
+        specs=specs,
+        stream_badge=badge,
+        stream_desc=desc
+    )
+
+    # If it's a series and we have a valid TMDB poster, heal any other episodes of this series
+    if tmdb_info.get("media_type") == "series" and tmdb_info.get("poster") and not tmdb_info["poster"].endswith(".svg"):
+        from database import heal_series_episodes
+        await heal_series_episodes(tmdb_info["title"], tmdb_info)
+        if parsed.get("raw_title") and parsed["raw_title"].lower() != tmdb_info["title"].lower():
+            await heal_series_episodes(parsed["raw_title"], tmdb_info)
+
+    res_badge = specs.get("resolution") or "HD"
+    codec_str = specs.get("codec") or ""
+    aud_str = specs.get("audio") or ""
+    tech_str = f"[{res_badge} {codec_str} {aud_str}]".replace("  ", " ")
+    sz_str = specs.get("size_str") or ""
+
+    if tmdb_info.get("media_type") == "series":
+        s = tmdb_info.get("season") or 1
+        e = tmdb_info.get("episode") or 1
+        ep_t = tmdb_info.get("episode_title") or f"Episode {e}"
+        print(f"[Indexed Series] #{message.id}: {tmdb_info['title']} S{s:02d}E{e:02d} ({ep_t}) {tech_str} {sz_str} [TMDB: {tmdb_info.get('tmdb_id')}, IMDb: {tmdb_info.get('imdb_id')}]")
+    else:
+        print(f"[Indexed Movie] #{message.id}: {tmdb_info['title']} ({tmdb_info.get('year')}) {tech_str} {sz_str} [TMDB: {tmdb_info.get('tmdb_id')}, IMDb: {tmdb_info.get('imdb_id')}]")
     return True
 
 async def scan_single_channel_history(chat_id: int) -> int:
@@ -379,10 +461,14 @@ async def scan_single_channel_history(chat_id: int) -> int:
                         batch_has_messages = True
                         if m.id not in scanned_ids:
                             scanned_ids.add(m.id)
-                            if extract_video_metadata(m):
-                                indexed = await index_single_message(chat_id, m)
-                                if indexed:
-                                    count += 1
+                            try:
+                                if extract_video_metadata(m):
+                                    indexed = await index_single_message(chat_id, m)
+                                    if indexed:
+                                        count += 1
+                                        await asyncio.sleep(0.1)
+                            except Exception as m_err:
+                                print(f"[Telegram Notice] Message #{m.id} skipped due to error: {m_err}")
 
                 if not batch_has_messages:
                     consecutive_empty_batches += 1
@@ -418,6 +504,12 @@ async def scan_all_channels():
         total_found += found
 
     print(f"[Telegram] History scan completed. Total library size: {total_found} videos.")
+    # Run self-healing library reconciliation
+    try:
+        from database import reconcile_library
+        await reconcile_library()
+    except Exception as rec_err:
+        print(f"[Warning] Post-scan reconciliation notice: {rec_err}")
 
 async def clear_and_rescan():
     from database import clear_library_database

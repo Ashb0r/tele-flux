@@ -10,6 +10,13 @@ services:
     volumes:
       # All persistent data (SQLite library, settings.json, Telegram session) lives in ./data
       - ./data:/app/data
+      - ./main.py:/app/main.py
+      - ./tmdb.py:/app/tmdb.py
+      - ./database.py:/app/database.py
+      - ./telegram_client.py:/app/telegram_client.py
+      - ./settings_manager.py:/app/settings_manager.py
+      - ./config.py:/app/config.py
+      - ./templates:/app/templates
     env_file:
       - .env
     environment:

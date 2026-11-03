@@ -40,6 +40,13 @@ async def lifespan(app: FastAPI):
     print("=" * 60)
     await init_db()
 
+    # Reconcile library: auto-heal any unlinked episodes or fallback movies
+    try:
+        from database import reconcile_library
+        await reconcile_library()
+    except Exception as rec_err:
+        print(f"[Warning] Startup library reconciliation notice: {rec_err}")
+
     # If already configured from previous run, start Telegram service right away
     if is_configured():
         print("[Telegram] Found existing configuration. Connecting to Telegram...")
@@ -204,6 +211,25 @@ async def get_manifest():
         }
     }
 
+# ---------------------------------------------------------------------
+# Dynamic SVG Poster Generator (Ensures no card is EVER blank in Stremio)
+# ---------------------------------------------------------------------
+
+@app.get("/poster/{media_type}/{title}.svg")
+async def get_poster_image(media_type: str, title: str):
+    from tmdb import generate_poster_svg
+    svg_data = generate_poster_svg(title, media_type)
+    return Response(
+        content=svg_data,
+        media_type="image/svg+xml",
+        headers={"Cache-Control": "public, max-age=86400"}
+    )
+
+def resolve_poster(poster: str | None, media_type: str, title: str) -> str:
+    if poster and poster.strip() and poster.startswith("http"):
+        return poster
+    return f"{PUBLIC_URL}/poster/{media_type}/{quote(title)}.svg"
+
 @app.get("/catalog/{media_type}/{catalog_id}.json")
 @app.get("/catalog/{media_type}/{catalog_id}/{extra}.json")
 async def get_catalog(media_type: str, catalog_id: str, extra: str | None = None):
@@ -219,11 +245,12 @@ async def get_catalog(media_type: str, catalog_id: str, extra: str | None = None
 
     metas = []
     for item in items:
+        safe_poster = resolve_poster(item.get("poster"), target_type, item["title"])
         metas.append({
             "id": item["stremio_id"],
             "type": target_type,
             "name": item["title"],
-            "poster": item["poster"],
+            "poster": safe_poster,
             "releaseInfo": str(item["year"]) if item["year"] else None,
             "description": item["overview"]
         })
@@ -237,12 +264,14 @@ async def get_meta(media_type: str, item_id: str):
     if not item:
         raise HTTPException(status_code=404, detail="Item not found")
 
+    safe_poster = resolve_poster(item.get("poster"), target_type, item["title"])
+
     meta_dict = {
         "id": item_id,
         "type": target_type,
         "name": item["title"],
         "year": item["year"],
-        "poster": item["poster"],
+        "poster": safe_poster,
         "background": item["backdrop"],
         "description": item["overview"],
         "genres": [g.strip() for g in (item["genres"] or "").split(",") if g.strip()],
@@ -264,13 +293,18 @@ async def get_stream(media_type: str, item_id: str):
 
     streams = []
     for v in videos:
-        size_gb = round(v["file_size"] / (1024 ** 3), 2)
         safe_name = quote(v["file_name"])
         play_url = f"{PUBLIC_URL}/play/{v['chat_id']}/{v['message_id']}/{safe_name}"
 
+        badge = v.get("stream_badge") or f"[Telegram ⚡] {v.get('resolution') or 'HD'}"
+        desc = v.get("stream_desc")
+        if not desc:
+            size_gb = round(v["file_size"] / (1024 ** 3), 2)
+            desc = f"📁 {v['file_name']}\n📦 {size_gb} GB"
+
         streams.append({
-            "name": "[Telegram]",
-            "title": f"{v['file_name']}\n💾 {size_gb} GB",
+            "name": badge,
+            "title": desc,
             "url": play_url
         })
 

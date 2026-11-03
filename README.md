@@ -82,7 +82,7 @@ The Web UI provides a clean 3-step setup:
 
 ```
 ┌────────────────────────────────────────────────────────┐
-│               Telegram Library TV Setup               │
+│               Telegram Library Setup               │
 │                                                        │
 │  1. Telegram Credentials                               │
 │     API ID:     [ 12345678                           ] │
