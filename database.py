@@ -477,9 +477,9 @@ async def reconcile_library():
                     await db.commit()
                     print(f"[Library Healed Movie] #{vid_id} '{fn}' -> '{hit['title']}' ({hit.get('year')}) [IMDb: {hit.get('imdb_id')}]")
 
-        # 3. Heal any movie where the assigned title doesn't match the filename's movie name
-        # (e.g. 'The Handmaiden' misassigned to 'The Dark Knight')
-        cur_all_movies = await db.execute("SELECT id, file_name, title, media_type FROM videos WHERE media_type = 'movie'")
+        # 3. Heal any movie where the assigned title or language doesn't match the filename/caption
+        # (e.g. 'The Handmaiden' misassigned to 'The Dark Knight', or 'Beast (Tamil)' assigned to 'Beast (English)')
+        cur_all_movies = await db.execute("SELECT id, file_name, title, media_type, tmdb_id, imdb_id FROM videos WHERE media_type = 'movie'")
         all_movies = await cur_all_movies.fetchall()
 
         if all_movies:
@@ -487,6 +487,7 @@ async def reconcile_library():
             for mrow in all_movies:
                 fn = mrow["file_name"]
                 curr_title = mrow["title"]
+                curr_tmdb_id = mrow["tmdb_id"]
                 vid_id = mrow["id"]
                 parsed = parse_filename(fn)
                 clean_parsed_title = parsed.get("raw_title", "")
@@ -495,10 +496,13 @@ async def reconcile_library():
                 norm_curr = normalize_title(strip_article(curr_title))
                 norm_parsed = normalize_title(strip_article(clean_parsed_title))
                 
-                if norm_curr and norm_parsed and (norm_curr not in norm_parsed and norm_parsed not in norm_curr):
-                    print(f"[Library Healing] Misassigned title detected on #{vid_id}: '{curr_title}' vs filename '{clean_parsed_title}'. Re-resolving...")
+                is_misaligned = norm_curr and norm_parsed and (norm_curr not in norm_parsed and norm_parsed not in norm_curr)
+                has_lang_tag = bool(parsed.get("language"))
+
+                if is_misaligned or has_lang_tag:
                     hit = await lookup_tmdb(fn, parsed_override=parsed)
-                    if hit:
+                    if hit and hit.get("tmdb_id") and hit["tmdb_id"] != curr_tmdb_id:
+                        print(f"[Library Healing] Disambiguated #{vid_id} '{fn}': TMDB {curr_tmdb_id} -> '{hit['title']}' (TMDB: {hit['tmdb_id']}, IMDb: {hit.get('imdb_id')})")
                         y_str = f" ({hit['year']})" if hit.get("year") else ""
                         header = f"{hit['title']}{y_str}"
                         specs = extract_media_specs(fn)
@@ -524,4 +528,3 @@ async def reconcile_library():
                             badge, desc, vid_id
                         ))
                         await db.commit()
-                        print(f"[Library Healed Misassignment] #{vid_id} '{fn}' -> '{hit['title']}' ({hit.get('year')}) [TMDB: {hit.get('tmdb_id')}, IMDb: {hit.get('imdb_id')}]")

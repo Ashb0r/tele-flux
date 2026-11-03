@@ -24,11 +24,21 @@ SEASON_EPISODE_PATTERNS = [
     re.compile(r'(?i)(?:[._\-\s\[\(])E(\d{2,3})(?=$|[._\-\s\]\)])'),
 ]
 
-# Strips channel tags, bots, watermarks at start of filename: [MM], [TR_HDS], @channel, (Mallu)
-CHANNEL_TAG_REGEX = re.compile(r'^(?:(?:\[.*?\]|\(.*?\)|@[\w_]+)[\s._-]*)+')
+# Strips channel tags, bots, watermarks, sites at start of filename: [MM], [TR_HDS], @channel, www.site.com
+CHANNEL_TAG_REGEX = re.compile(r'^(?:(?:\[.*?\]|\(.*?\)|@[\w_]+|www\.\S+[\s._-]*)[\s._-]*)+')
 URL_WATERMARK_REGEX = re.compile(r'(?i)\b(?:https?://\S+|www\.\S+|t\.me/\S+|@[a-zA-Z0-9_]+)\b')
 YEAR_REGEX = re.compile(r'\b(19\d{2}|20\d{2})\b')
 YEAR_BRACKET_REGEX = re.compile(r'\s*[\(\[]\s*(19\d{2}|20\d{2})\s*[\)\]]')
+
+# High-confidence technical markers that signal where a title ends when no year is present
+TECH_SPLIT_REGEX = re.compile(
+    r'(?i)\b('
+    r'2160p|1440p|1080p|1080i|720p|576p|480p|360p|4k|2k|uhd|fhd|hd|sd|'
+    r'web-?dl|webrip|web|bluray|blu-ray|bdrip|brrip|dvdrip|dvdscr|dvd|hdtv|hdrip|cam|hdcam|'
+    r'x264|x265|h\.?264|h\.?265|hevc|avc|av1|vp9|10bit|8bit|'
+    r'aac\d*|ac3|eac3|ddp?\d*(?:\.\d)?|dts(?:-hd)?|truehd|atmos'
+    r')\b'
+)
 
 LANGUAGE_TOKENS = (
     r"malayalam|tamil|hindi|telugu|kannada|bengali|marathi|punjabi|gujarati|urdu|"
@@ -206,14 +216,30 @@ def choose_best_tmdb_hit(results: list[dict], query: str, year: int | None, file
             if len(pool) == 1:
                 return pool[0]
 
-    # If multiple still match, filter by language
+    # If multiple still match the same name and year (wall hit!), disambiguate by language
     if file_lang:
-        lang_code = LANGUAGE_CODE_MAP.get(file_lang.lower(), file_lang.lower())
-        lang_matches = [item for item in pool if (item.get("original_language") or "").lower() == lang_code]
-        if lang_matches:
-            pool = lang_matches
-            if len(pool) == 1:
-                return pool[0]
+        if isinstance(file_lang, (list, tuple, set)):
+            lang_tokens = [str(x).lower() for x in file_lang]
+        else:
+            lang_tokens = re.split(r'[,+\s/|]+', str(file_lang).lower())
+
+        target_codes = set()
+        for tok in lang_tokens:
+            cleaned_tok = re.sub(r'[^a-z]', '', tok)
+            if cleaned_tok in LANGUAGE_CODE_MAP:
+                target_codes.add(LANGUAGE_CODE_MAP[cleaned_tok])
+            elif len(cleaned_tok) == 2:
+                target_codes.add(cleaned_tok)
+
+        if target_codes:
+            lang_matches = [
+                item for item in pool
+                if (item.get("original_language") or "").lower() in target_codes
+            ]
+            if lang_matches:
+                pool = lang_matches
+                if len(pool) == 1:
+                    return pool[0]
 
     # Fallback to top-ranked TMDB popularity
     pool.sort(key=lambda x: float(x.get("popularity", 0.0)), reverse=True)
@@ -582,13 +608,36 @@ def clean_episode_title(ep_part: str) -> str:
 
 def parse_filename(file_name: str, caption: str = "") -> dict:
     """
-    100% Reliable TV Show vs Movie Classification:
-    - Gathers clean candidate title lines from filename and caption (skipping junk).
+    100% Reliable TV Show vs Movie Classification & Title Extraction:
+    - Extracts explicit caption fields ("Movie: ...", "Title: ...", "Year: ...") if present.
     - If any candidate contains Season/Episode indicators, STRICTLY classified as TV Series.
-    - Movie sequels ('Pushpa - 2', 'Drishyam - 2') remain strictly Movies.
-    - All variations of the same show ('Nadu Center Tamil', 'Nadu Center') map to 'Nadu Center'.
+    - Movie sequels ('Pushpa 2', 'Drishyam 2') remain strictly Movies.
+    - Universal Movie Title Resolution:
+        1. Release Year boundary split: Title <Year> Specs
+        2. Technical Spec token boundary split: Title <Resolution/Codec/Rip> Specs
+        3. All variations of the same show map to the clean canonical title.
     """
     candidates = []
+    caption_year = None
+    explicit_title = None
+
+    if caption:
+        for line in caption.split("\n"):
+            line = line.strip()
+            if not line:
+                continue
+            # Check for explicit Movie / Series / Title / Film field in caption
+            m_field = re.match(r'(?i)^\s*(?:[🎬📺🎥🎞️])?\s*(?:movie|title|film|series|name|show)\s*[:\-]\s*(.+)$', line)
+            if m_field:
+                explicit_title = m_field.group(1).strip()
+            # Check for explicit Year field in caption
+            m_yr = re.match(r'(?i)^\s*(?:[📅🗓️])?\s*(?:year|release)\s*[:\-]\s*(19\d{2}|20\d{2})', line)
+            if m_yr:
+                caption_year = int(m_yr.group(1))
+
+    if explicit_title:
+        candidates.append(explicit_title)
+
     # If file_name is not generic Telegram placeholder
     if file_name and not re.match(r'(?i)^video_\d+\.\w+$', file_name):
         candidates.append(file_name)
@@ -644,6 +693,8 @@ def parse_filename(file_name: str, caption: str = "") -> dict:
                 ep_part = base[m.end():]
 
                 raw_title, year = clean_series_title(show_part)
+                if not year and caption_year:
+                    year = caption_year
                 ep_name = clean_episode_title(ep_part)
 
                 series_results.append({
@@ -673,7 +724,7 @@ def parse_filename(file_name: str, caption: str = "") -> dict:
     base = re.sub(r'(19\d{2}|20\d{2})([a-zA-Z])', r'\1 \2', base)
     base = re.sub(r'([a-zA-Z])(19\d{2}|20\d{2})', r'\1 \2', base)
 
-    # Detect release year: if a year appears after the title, split at the year boundary!
+    # Strategy 1: Release Year boundary split (Title <Year> Specs)
     year_matches = list(YEAR_REGEX.finditer(base))
     year = None
     if year_matches:
@@ -688,6 +739,18 @@ def parse_filename(file_name: str, caption: str = "") -> dict:
                 base = prefix
         else:
             year = int(last_m.group(1))
+
+    if not year and caption_year:
+        year = caption_year
+
+    # Strategy 2: Tech Token boundary split (when no release year exists)
+    if not year:
+        tech_m = TECH_SPLIT_REGEX.search(base)
+        if tech_m and tech_m.start() > 2:
+            prefix = base[:tech_m.start()].strip()
+            prefix = re.sub(r'[\(\[\{\s._\-+:]+$', '', prefix).strip()
+            if len(prefix) >= 2:
+                base = prefix
 
     clean = YEAR_BRACKET_REGEX.sub(" ", base)
     clean = YEAR_REGEX.sub(" ", clean)
@@ -850,16 +913,31 @@ async def execute_tmdb_search(client: httpx.AsyncClient, api_key: str, query: st
         "include_adult": "false"
     }
 
-    # Step 1: Query by name first
-    data = await tmdb_get_with_retry(client, url, params)
-    results = data.get("results", []) if data else []
+    all_results = []
+    seen_ids = set()
 
-    # If year was given and 0 results returned, also try with year parameter
-    if not results and year:
+    # Step 1: If year was provided, query with year filter to surface same-year candidates
+    if year:
         params_year = dict(params)
         params_year["year" if media_type == "movie" else "first_air_date_year"] = year
         data_y = await tmdb_get_with_retry(client, url, params_year)
-        results = data_y.get("results", []) if data_y else []
+        if data_y:
+            for item in data_y.get("results", []):
+                iid = item.get("id")
+                if iid and iid not in seen_ids:
+                    seen_ids.add(iid)
+                    all_results.append(item)
+
+    # Step 2: Also query general search to cover broad catalog
+    data = await tmdb_get_with_retry(client, url, params)
+    if data:
+        for item in data.get("results", []):
+            iid = item.get("id")
+            if iid and iid not in seen_ids:
+                seen_ids.add(iid)
+                all_results.append(item)
+
+    results = all_results
 
     # Fallback to multi-search ONLY filtering for the exact requested media_type
     if not results:
