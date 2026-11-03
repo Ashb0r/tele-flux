@@ -326,6 +326,18 @@ async def clear_library_database():
         await db.execute("DELETE FROM videos")
         await db.commit()
 
+async def reset_all_data():
+    """Wipes all library videos and downloader queue/checkpoints for a clean fresh start."""
+    async with aiosqlite.connect(DB_FILE) as db:
+        await db.execute("DELETE FROM videos")
+        try:
+            await db.execute("DELETE FROM download_queue")
+            await db.execute("DELETE FROM download_checkpoints")
+            await db.execute("DELETE FROM sqlite_sequence")
+        except Exception:
+            pass
+        await db.commit()
+
 async def get_series_master_metadata(series_title: str) -> dict | None:
     """
     Finds existing episode of this series that already has verified TMDB / IMDb metadata.

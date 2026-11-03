@@ -1,0 +1,87 @@
+# =====================================================================
+# Docker Ignore for Telegram Media Suite & Stremio Add-on
+# Prevents large media files, persistent credentials, and dev caches
+# from inflating the Docker build context or leaking into image layers.
+# =====================================================================
+
+# --- Git & Repository Metadata ---
+.git
+.gitignore
+.gitattributes
+.dockerignore
+
+# --- Media Storage & Temporary Downloads (Never bake media into image) ---
+media
+media/
+media/**
+**/media/**
+.downloads
+.downloads/
+**/.downloads/**
+*.part
+test_media
+test_media/
+test_media/**
+tests/test_media
+tests/test_media/
+tests/test_media/**
+
+# --- Persistent Runtime Data & Secrets (Mounted via docker-compose volume) ---
+data
+data/
+data/**
+**/data/**
+*.session
+*.session-journal
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+.env
+.env.*
+*.env
+
+# --- Unit Tests & Test Infrastructure ---
+tests
+tests/
+tests/**
+
+# --- Python Bytecode & Cache ---
+__pycache__
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+.pytest_cache
+.pytest_cache/
+.coverage
+htmlcov/
+
+# --- Virtual Environments ---
+venv
+venv/
+.venv
+.venv/
+env
+env/
+ENV
+ENV/
+
+# --- IDE, Editor & OS Artifacts ---
+.vscode
+.vscode/
+.idea
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# --- Documentation & Misc ---
+*.md
+LICENSE
+docker-compose*.yml

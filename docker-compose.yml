@@ -8,8 +8,10 @@ services:
     ports:
       - "${SERVER_PORT:-7000}:7000"
     volumes:
-      # All persistent data (SQLite library, settings.json, Telegram session) lives in ./data
+      # Persistent data (SQLite library, settings.json, Telegram session)
       - ./data:/app/data
+      # Persistent media storage (Movies, TV Shows, Unsorted, and .downloads)
+      - ./media:/media
       - ./main.py:/app/main.py
       - ./tmdb.py:/app/tmdb.py
       - ./database.py:/app/database.py
@@ -17,8 +19,16 @@ services:
       - ./settings_manager.py:/app/settings_manager.py
       - ./config.py:/app/config.py
       - ./templates:/app/templates
+      - ./downloader:/app/downloader
     env_file:
       - .env
     environment:
       - PYTHONUNBUFFERED=1
       - DATA_DIR=/app/data
+      - MEDIA_DIR=/media
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:7000/stats || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s

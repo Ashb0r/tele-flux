@@ -13,7 +13,8 @@ A high-performance, self-hosted **Stremio Addon** with an interactive **Web Conf
   - Appears under the **official movie / TV show page** in Stremio alongside other addons (Torrentio, Cinemeta, etc.).
   - Adds dedicated **Telegram Movies** and **Telegram Series** catalog rows on your Stremio home screen.
 - 📡 **Real-time Live Sync**: Automatically captures, indexes, and surfaces newly posted or forwarded videos the moment they land in your Telegram channel.
-- 🐳 **Docker-Ready**: Comes with Docker Compose, persisting your database and Telegram sessions safely in `./data`.
+- 📥 **Fault-Tolerant Local Media Downloader & Archive (`/downloads`)**: Complete, independent, and sequential Telegram media downloader with MTProto chunked transfers, automatic resumption, power-failure recovery, SHA-256 checksums, and automatic TMDB movie/TV directory organization.
+- 🐳 **Docker-Ready**: Comes with Docker Compose, persisting your database and Telegram sessions safely in `./data` and downloaded media in `./media`.
 
 ---
 
@@ -217,6 +218,45 @@ The addon will now scan 100% of your channel history from day one.
 
 3. **Hardware Acceleration (`tgcrypto`)**:
    Raw Telegram packets are decrypted in C using AES-CTR at speeds exceeding 80 MB/s.
+
+---
+
+## Fault-Tolerant Media Downloader & Local Archive
+
+The application includes an independent, fault-tolerant Telegram media downloading and local archiving engine operating side-by-side with the Stremio streaming addon.
+
+### Key Capabilities
+
+1. **Independent Channel Selection**:
+   - Separate configuration for **Streaming Channels** and **Download Channels**.
+   - Changing download selections never affects streaming, and vice versa.
+2. **Strict Sequential FIFO Downloading**:
+   - Downloads the oldest eligible media post first according to Telegram message timestamps.
+   - Operates with 1 active download at a time to optimize home network and disk I/O.
+   - Survives database restarts, Docker container restarts, and power outages.
+3. **Resumable MTProto Chunk Engine**:
+   - Downloads in verified 512 KB chunks directly to `.downloads/<job_id>_<filename>.part`.
+   - On interruption or crash, resumes from the last safely persisted chunk boundary.
+   - Automatically detects and refreshes expired Telegram `FileReferenceExpiredError` by re-fetching the original message.
+4. **Power Failure & Startup Recovery**:
+   - Automatic recovery inspects unfinished jobs on startup, validates partial files, and resumes downloads seamlessly.
+5. **Atomic Commit & Verification**:
+   - Validates downloaded file size against expected Telegram size.
+   - Computes local SHA-256 integrity checksum.
+   - Performs atomic filesystem rename (`os.replace`) within the same filesystem.
+6. **Automatic TMDB Organization**:
+   - Analyzes title, year, season, and episode.
+   - Queries TMDB and moves verified files into standard media library structures:
+     - `Movies/<Title> (<Year>)/<Title> (<Year>).ext`
+     - `TV Shows/<Series>/Season XX/<Series> - SXXEXX.ext`
+     - `Unsorted/<OriginalFilename>.ext` (for ambiguous items)
+7. **Telegram Archival Notifications**:
+   - Replies to the original Telegram post confirming successful archival on the home server.
+   - Independent retry queue for notifications without re-downloading media.
+8. **Interactive Download Dashboard (`/downloads`)**:
+   - Real-time progress bar, transfer speed, and ETA.
+   - Controls to pause, resume, skip, retry, and delete jobs.
+   - Metadata correction modal to adjust title, year, season, episode, or TMDB ID.
 
 ---
 

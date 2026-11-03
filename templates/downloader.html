@@ -1,0 +1,980 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Local Media Downloader - Telegram Media Suite</title>
+  <style>
+    :root {
+      --bg: #090d16;
+      --card-bg: #121826;
+      --card-border: #1e293b;
+      --accent: #10b981;
+      --accent-hover: #059669;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+      --input-bg: #1e293b;
+      --input-border: #334155;
+      --success: #10b981;
+      --warning: #f59e0b;
+      --error: #ef4444;
+      --badge-channel: #3b82f6;
+      --badge-group: #10b981;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+    body { background-color: var(--bg); color: var(--text); min-height: 100vh; display: flex; flex-direction: column; align-items: center; padding-bottom: 3rem; }
+
+    /* Top Navigation Bar */
+    .top-nav { width: 100%; background: #0f172a; border-bottom: 1px solid #1e293b; padding: 0.75rem 1.5rem; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 100; box-shadow: 0 4px 12px rgba(0,0,0,0.4); }
+    .brand { display: flex; align-items: center; gap: 0.75rem; font-weight: 800; font-size: 1.15rem; letter-spacing: -0.02em; color: #fff; }
+    .brand-icon { background: linear-gradient(135deg, #10b981, #06b6d4); border-radius: 8px; width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; font-size: 1.1rem; box-shadow: 0 0 12px rgba(16, 185, 129, 0.4); }
+    .nav-links { display: flex; gap: 0.5rem; }
+    .nav-link { padding: 0.5rem 1rem; border-radius: 8px; text-decoration: none; color: var(--text-muted); font-size: 0.9rem; font-weight: 600; transition: all 0.2s; display: flex; align-items: center; gap: 0.4rem; }
+    .nav-link:hover { color: #fff; background: rgba(255, 255, 255, 0.05); }
+    .nav-link.active { color: #fff; background: rgba(16, 185, 129, 0.2); border: 1px solid rgba(16, 185, 129, 0.4); }
+
+    .container { width: 100%; max-width: 960px; padding: 2rem 1rem; }
+    .page-header { text-align: center; margin-bottom: 2rem; }
+    .page-header h1 { font-size: 1.95rem; font-weight: 800; letter-spacing: -0.03em; margin-bottom: 0.45rem; }
+    .page-header p { color: var(--text-muted); font-size: 0.95rem; }
+
+    .card { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 12px; padding: 1.75rem; margin-bottom: 1.5rem; box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.35); }
+    .card-title { font-size: 1.15rem; font-weight: 700; margin-bottom: 0.35rem; display: flex; align-items: center; justify-content: space-between; }
+    .card-subtitle { font-size: 0.85rem; color: var(--text-muted); margin-bottom: 1.25rem; line-height: 1.4; }
+
+    .form-group { margin-bottom: 1.25rem; }
+    .form-label { display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 0.4rem; color: #cbd5e1; }
+    .form-hint { font-size: 0.78rem; color: var(--text-muted); margin-top: 0.35rem; line-height: 1.3; }
+    .form-input { width: 100%; background: var(--input-bg); border: 1px solid var(--input-border); border-radius: 8px; padding: 0.7rem 0.9rem; color: #fff; font-size: 0.95rem; outline: none; }
+    .form-input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.2); }
+
+    .btn { padding: 0.65rem 1.25rem; border-radius: 8px; font-size: 0.9rem; font-weight: 600; cursor: pointer; border: none; transition: all 0.2s; display: inline-flex; align-items: center; gap: 0.4rem; justify-content: center; }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
+    .btn-secondary { background: #334155; color: #fff; }
+    .btn-secondary:hover:not(:disabled) { background: #475569; }
+    .btn-danger { background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.4); color: var(--error); }
+    .btn-danger:hover:not(:disabled) { background: rgba(239, 68, 68, 0.3); }
+    .btn-sm { padding: 0.35rem 0.65rem; font-size: 0.78rem; }
+    .btn:disabled, .btn.loading { opacity: 0.7; cursor: not-allowed; pointer-events: none; }
+
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+    @media (max-width: 680px) { .grid-2 { grid-template-columns: 1fr; } }
+
+    .toggle-row { display: flex; align-items: center; justify-content: space-between; padding: 0.75rem 1rem; background: var(--input-bg); border: 1px solid var(--input-border); border-radius: 8px; margin-bottom: 1rem; }
+    .toggle-switch { position: relative; display: inline-block; width: 48px; height: 26px; }
+    .toggle-switch input { opacity: 0; width: 0; height: 0; }
+    .slider { position: absolute; cursor: pointer; inset: 0; background-color: #334155; border-radius: 34px; transition: 0.3s; }
+    .slider:before { position: absolute; content: ""; height: 20px; width: 20px; left: 3px; bottom: 3px; background-color: white; border-radius: 50%; transition: 0.3s; }
+    input:checked + .slider { background-color: var(--accent); }
+    input:checked + .slider:before { transform: translateX(22px); }
+
+    .channel-list { display: flex; flex-direction: column; gap: 0.5rem; max-height: 260px; overflow-y: auto; }
+    .channel-item { display: flex; align-items: center; justify-content: space-between; padding: 0.65rem 0.85rem; background: var(--input-bg); border: 1px solid var(--input-border); border-radius: 8px; cursor: pointer; transition: all 0.2s; }
+    .channel-item:hover:not(.disabled) { border-color: var(--accent); }
+    .channel-item.selected { border-color: var(--accent); background: rgba(16, 185, 129, 0.08); }
+    .channel-item.disabled { opacity: 0.45; cursor: not-allowed; background: rgba(15, 23, 42, 0.4); }
+    .channel-info { display: flex; align-items: center; gap: 0.75rem; }
+    .channel-checkbox { width: 18px; height: 18px; accent-color: var(--accent); cursor: pointer; }
+
+    .type-pill { padding: 0.15rem 0.5rem; border-radius: 9999px; font-size: 0.7rem; font-weight: 700; text-transform: uppercase; }
+    .pill-channel { background: rgba(59, 130, 246, 0.2); color: var(--badge-channel); }
+    .pill-group { background: rgba(16, 185, 129, 0.2); color: var(--badge-group); }
+
+    /* Spinners & Animations */
+    @keyframes spin { 100% { transform: rotate(360deg); } }
+    .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid rgba(255,255,255,0.3); border-top-color: #fff; border-radius: 50%; animation: spin 0.8s linear infinite; vertical-align: middle; margin-right: 0.35rem; }
+
+    /* Active Transfer */
+    .transfer-box { background: linear-gradient(135deg, rgba(16, 185, 129, 0.08), rgba(6, 182, 212, 0.05)); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 12px; padding: 1.5rem; margin-bottom: 1.5rem; }
+    .progress-bar-bg { background: #1e293b; height: 12px; border-radius: 6px; overflow: hidden; margin: 0.75rem 0; }
+    .progress-bar-fill { background: linear-gradient(90deg, #10b981, #06b6d4); height: 100%; width: 0%; transition: width 0.3s; }
+    .transfer-meta { display: flex; justify-content: space-between; font-size: 0.85rem; color: var(--text-muted); }
+
+    /* Table */
+    .data-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; margin-top: 0.75rem; }
+    .data-table th { text-align: left; padding: 0.75rem; color: var(--text-muted); border-bottom: 1px solid var(--card-border); font-weight: 600; text-transform: uppercase; font-size: 0.75rem; letter-spacing: 0.04em; }
+    .data-table td { padding: 0.75rem; border-bottom: 1px solid #1a2234; vertical-align: middle; }
+    .data-table tr:hover { background: rgba(255, 255, 255, 0.02); }
+
+    .badge { display: inline-flex; align-items: center; gap: 0.3rem; padding: 0.2rem 0.55rem; border-radius: 9999px; font-size: 0.72rem; font-weight: 700; text-transform: uppercase; }
+    .badge-downloading { background: rgba(16, 185, 129, 0.2); color: var(--success); }
+    .badge-queued { background: rgba(59, 130, 246, 0.2); color: #60a5fa; }
+    .badge-paused { background: rgba(245, 158, 11, 0.2); color: var(--warning); }
+    .badge-failed { background: rgba(239, 68, 68, 0.2); color: var(--error); }
+    .badge-completed { background: rgba(16, 185, 129, 0.2); color: var(--success); }
+
+    .alert { padding: 0.85rem 1rem; border-radius: 8px; font-size: 0.88rem; margin-bottom: 1.25rem; display: none; line-height: 1.4; }
+    .alert-success { background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.3); color: #6ee7b7; }
+    .alert-warning { background: rgba(245, 158, 11, 0.15); border: 1px solid rgba(245, 158, 11, 0.35); color: #fde68a; }
+    .alert-error { background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.3); color: #fca5a5; }
+
+    /* Modern Floating Toast Notification System */
+    #toastContainer { position: fixed; top: 1.25rem; right: 1.25rem; z-index: 9999; display: flex; flex-direction: column; gap: 0.65rem; pointer-events: none; }
+    .toast { pointer-events: auto; min-width: 300px; max-width: 420px; background: #1e293b; border-radius: 10px; padding: 0.85rem 1.15rem; color: #fff; font-size: 0.88rem; box-shadow: 0 10px 30px rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; border-left: 4px solid var(--accent); transform: translateX(120%); transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.25s; opacity: 0; }
+    .toast.show { transform: translateX(0); opacity: 1; }
+    .toast-success { border-left-color: var(--success); background: #132223; }
+    .toast-error { border-left-color: var(--error); background: #261619; }
+    .toast-info { border-left-color: var(--accent); }
+    .toast-content { display: flex; align-items: center; gap: 0.6rem; line-height: 1.4; flex: 1; }
+    .toast-icon { font-size: 1.15rem; flex-shrink: 0; }
+    .toast-close { background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 1.1rem; line-height: 1; padding: 0.2rem; }
+    .toast-close:hover { color: #fff; }
+
+    /* Modal */
+    .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.7); display: none; align-items: center; justify-content: center; z-index: 200; padding: 1rem; }
+    .modal-box { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 12px; width: 100%; max-width: 500px; padding: 1.5rem; }
+  </style>
+</head>
+<body>
+
+  <!-- Floating Toast Notification System -->
+  <div id="toastContainer"></div>
+
+  <!-- Top Nav Bar -->
+  <nav class="top-nav">
+    <div class="brand">
+      <div class="brand-icon">⬇️</div>
+      <span>Telegram Media Suite</span>
+    </div>
+    <div class="nav-links">
+      <a href="/settings" class="nav-link">⚙️ Settings & APIs</a>
+      <a href="/downloads" class="nav-link active">⬇️ Media Downloader</a>
+      <a href="/stremio" class="nav-link">📺 Stremio Add-on</a>
+    </div>
+  </nav>
+
+  <div class="container">
+    <div class="page-header">
+      <h1>Local Media Downloader & Archive</h1>
+      <p>Download video files sequentially from Telegram into organized local folders with TMDB metadata, SHA-256 integrity, and crash recovery.</p>
+    </div>
+
+    <!-- Alert / Notice Banners -->
+    <div id="statusAlert" class="alert"></div>
+
+    <div id="tokenWarningBanner" class="alert alert-warning" style="display:none; align-items:center; justify-content:space-between; gap:1rem; flex-wrap:wrap; margin-bottom:1.5rem;">
+      <div style="display:flex; align-items:center; gap:0.75rem;">
+        <span style="font-size:1.6rem;">⚠️</span>
+        <div>
+          <div style="font-weight:700; font-size:0.95rem; color:#fcd34d;">Telegram Credentials Not Configured</div>
+          <div style="font-size:0.83rem; color:#fde68a;">Please configure your Telegram API ID, API Hash, and Bot Token before starting downloads.</div>
+        </div>
+      </div>
+      <a href="/settings" class="btn btn-primary btn-sm" style="background:#f59e0b; color:#0f172a; font-weight:700; text-decoration:none;">⚙️ Go to Settings</a>
+    </div>
+
+    <!-- Active Media Transfer Card -->
+    <div class="transfer-box" id="transferBox">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <div>
+          <span class="badge badge-queued" id="transferBadge">Idle</span>
+          <span style="font-weight:700; margin-left:0.5rem; font-size:1.05rem;" id="activeFilename">No active download in progress</span>
+        </div>
+        <div id="transferControls" style="display:none; gap:0.5rem;">
+          <button type="button" class="btn btn-secondary btn-sm" onclick="pauseCurrentJob()">⏸️ Pause</button>
+          <button type="button" class="btn btn-danger btn-sm" onclick="skipCurrentJob()">⏭️ Skip</button>
+        </div>
+      </div>
+
+      <div class="progress-bar-bg">
+        <div class="progress-bar-fill" id="progressFill"></div>
+      </div>
+
+      <div class="transfer-meta">
+        <span id="transferSize">0 MB / 0 MB (0%)</span>
+        <span id="transferSpeed">0 MB/s</span>
+        <span id="transferEta">ETA: --</span>
+      </div>
+    </div>
+
+    <!-- Downloader Configuration Card -->
+    <div class="card">
+      <div class="card-title">
+        <span>1. Downloader Configuration</span>
+        <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
+          <button type="button" class="btn btn-secondary" id="btnRefreshChats" style="padding:0.35rem 0.75rem; font-size:0.8rem;" onclick="loadChats(true)">
+            🔄 Refresh Channels
+          </button>
+          <button type="button" class="btn btn-secondary" id="btnSyncMedia" style="padding:0.35rem 0.75rem; font-size:0.8rem;" onclick="triggerMediaSync(false)">
+            ⚡ Scan Channel for Media
+          </button>
+        </div>
+      </div>
+      <div class="card-subtitle">
+        Configure auto-download channels, download destination, disk limits, and notification preferences.
+      </div>
+
+      <!-- Master Switch -->
+      <div class="toggle-row">
+        <div>
+          <div style="font-weight:700; font-size:0.95rem;">Enable Automatic Local Downloader</div>
+          <div style="font-size:0.8rem; color:var(--text-muted);">When turned off, no files will be downloaded to disk.</div>
+        </div>
+        <label class="toggle-switch">
+          <input type="checkbox" id="dlEnabled" onchange="handleToggleChange()">
+          <span class="slider"></span>
+        </label>
+      </div>
+
+      <!-- Channel Selection -->
+      <div class="form-group">
+        <label class="form-label">Auto-Download Telegram Channels</label>
+        <div id="channelContainer" class="channel-list">
+          <div style="padding:1.5rem; text-align:center; color:var(--text-muted);"><span class="spinner" style="border-top-color:var(--accent);"></span> Loading channels...</div>
+        </div>
+        <div class="form-hint">Channels reserved for Stremio Streaming cannot be selected for downloading.</div>
+
+        <!-- Manual Channel Addition -->
+        <div style="margin-top:0.85rem; padding:0.85rem; background:rgba(255,255,255,0.02); border:1px dashed var(--input-border); border-radius:8px;">
+          <div style="font-size:0.82rem; font-weight:600; margin-bottom:0.4rem; color:#cbd5e1;">➕ Add Channel Manually (by ID or @username)</div>
+          <div style="display:flex; gap:0.5rem;">
+            <input type="text" id="manualChatInput" class="form-input" style="flex:1;" placeholder="e.g. -1003961034355 or @channel_username">
+            <button type="button" class="btn btn-secondary" id="btnManualAdd" onclick="addManualChat()">Add Channel</button>
+          </div>
+          <div class="form-hint" id="manualHint">If a channel isn't showing yet, enter its ID (starts with -100) or public @username to add it immediately.</div>
+        </div>
+      </div>
+
+      <!-- Paths & Disk Guard -->
+      <div class="grid-2">
+        <div class="form-group">
+          <label class="form-label">Local Media Directory</label>
+          <input type="text" id="mediaDir" class="form-input" placeholder="/media">
+          <div class="form-hint">Organizes into <code>Movies/Title (Year)/</code> and <code>TV Shows/Title/Season XX/</code></div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Min Free Disk Space (GB)</label>
+          <input type="number" step="0.5" id="minDisk" class="form-input" placeholder="4.5">
+          <div class="form-hint">Pauses downloads automatically before running out of drive storage.</div>
+        </div>
+      </div>
+
+      <!-- Notifications -->
+      <div class="toggle-row">
+        <div>
+          <div style="font-weight:600; font-size:0.9rem;">Telegram Completion Notification</div>
+          <div style="font-size:0.78rem; color:var(--text-muted);">Replies to the original Telegram post when download and SHA-256 validation complete.</div>
+        </div>
+        <label class="toggle-switch">
+          <input type="checkbox" id="notifEnabled" checked>
+          <span class="slider"></span>
+        </label>
+      </div>
+
+      <div style="display:flex; justify-content:flex-end;">
+        <button type="button" class="btn btn-primary" id="btnSaveDownloader" onclick="saveDownloaderConfig()">
+          💾 Save Downloader Settings
+        </button>
+      </div>
+    </div>
+
+    <!-- Persistent FIFO Download Queue -->
+    <div class="card">
+      <div class="card-title">
+        <div style="display:flex; align-items:center; gap:0.5rem;">
+          <span>2. Persistent FIFO Download Queue</span>
+          <span id="queueCountBadge" class="badge badge-queued">0 Queued</span>
+        </div>
+        <button type="button" class="btn btn-secondary" id="btnSyncMedia2" style="padding:0.35rem 0.75rem; font-size:0.8rem;" onclick="triggerMediaSync(false)">
+          ⚡ Scan Channel for Media
+        </button>
+      </div>
+      <div class="card-subtitle">
+        Strict sequential order (oldest Telegram message first). Survives reboots and power outages.
+      </div>
+
+      <div style="overflow-x:auto;">
+        <table class="data-table" id="queueTable">
+          <thead>
+            <tr>
+              <th>Pos</th>
+              <th>Filename</th>
+              <th>Size</th>
+              <th>Status</th>
+              <th>Progress</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="queueBody">
+            <tr><td colspan="6" style="text-align:center; color:var(--text-muted); padding:1.5rem;"><span class="spinner" style="border-top-color:var(--accent);"></span> Loading queue...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Downloaded Content Archives -->
+    <div class="card">
+      <div class="card-title">
+        <span>3. Downloaded Content Archives</span>
+        <span id="historyCountBadge" class="badge badge-completed">0 Completed</span>
+      </div>
+      <div class="card-subtitle">
+        Media files verified with SHA-256 and committed to your local disk storage.
+      </div>
+
+      <div style="overflow-x:auto;">
+        <table class="data-table" id="historyTable">
+          <thead>
+            <tr>
+              <th>Title</th>
+              <th>Type</th>
+              <th>Size</th>
+              <th>Saved Path</th>
+              <th>Completed At</th>
+            </tr>
+          </thead>
+          <tbody id="historyBody">
+            <tr><td colspan="5" style="text-align:center; color:var(--text-muted); padding:1.5rem;"><span class="spinner" style="border-top-color:var(--accent);"></span> Loading archives...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Metadata Override Modal -->
+  <div class="modal-backdrop" id="metaModal">
+    <div class="modal-box">
+      <div class="card-title" style="margin-bottom:0.75rem;">Edit TMDB Metadata Override</div>
+      <div class="form-group">
+        <label class="form-label">Media Type</label>
+        <select id="modalMediaType" class="form-input">
+          <option value="movie">Movie</option>
+          <option value="series">TV Series Episode</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Title</label>
+        <input type="text" id="modalTitle" class="form-input" placeholder="Title">
+      </div>
+      <div class="grid-2">
+        <div class="form-group">
+          <label class="form-label">Year</label>
+          <input type="number" id="modalYear" class="form-input" placeholder="2024">
+        </div>
+        <div class="form-group" id="modalSeasonGroup">
+          <label class="form-label">Season / Episode</label>
+          <div style="display:flex; gap:0.5rem;">
+            <input type="number" id="modalSeason" class="form-input" placeholder="S01">
+            <input type="number" id="modalEpisode" class="form-input" placeholder="E01">
+          </div>
+        </div>
+      </div>
+      <div style="display:flex; justify-content:flex-end; gap:0.5rem; margin-top:1rem;">
+        <button type="button" class="btn btn-secondary" onclick="closeMetaModal()">Cancel</button>
+        <button type="button" class="btn btn-primary" onclick="submitMetaOverride()">Save Override</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let isTokenConfigured = false;
+    let botToken = '';
+    let discoveredChats = [];
+    let selectedDownloadCids = new Set();
+    let stremioCids = new Set();
+    let currentActiveJobId = null;
+    let editingJobId = null;
+
+    // --- Toast Notification Utility ---
+    function showToast(message, type = 'info', duration = 4000) {
+      const container = document.getElementById('toastContainer');
+      const toast = document.createElement('div');
+      toast.className = `toast toast-${type}`;
+      
+      let icon = 'ℹ️';
+      if (type === 'success') icon = '✓';
+      if (type === 'error') icon = '✕';
+      if (type === 'warning') icon = '⚠️';
+      
+      toast.innerHTML = `
+        <div class="toast-content">
+          <span class="toast-icon">${icon}</span>
+          <span>${message}</span>
+        </div>
+        <button class="toast-close" onclick="this.parentElement.remove()">×</button>
+      `;
+      
+      container.appendChild(toast);
+      setTimeout(() => toast.classList.add('show'), 10);
+      
+      const timer = setTimeout(() => {
+        toast.classList.remove('show');
+        setTimeout(() => toast.remove(), 250);
+      }, duration);
+
+      toast.addEventListener('click', () => {
+        clearTimeout(timer);
+        toast.classList.remove('show');
+        setTimeout(() => toast.remove(), 250);
+      });
+    }
+
+    function showAlert(msg, type) {
+      showToast(msg, type);
+      const box = document.getElementById('statusAlert');
+      if (box) {
+        box.className = `alert alert-${type}`;
+        box.innerText = msg;
+        box.style.display = 'block';
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+    }
+
+    // --- Page Initialization ---
+    function handleToggleChange() {
+      const isEnabled = document.getElementById('dlEnabled').checked;
+      renderActiveTransfer(null);
+      if (isEnabled && selectedDownloadCids.size === 0) {
+        showToast('Downloader enabled. Remember to select a download channel below and click "Save Downloader Settings".', 'info');
+      }
+    }
+
+    async function init() {
+      try {
+        // 1. Load system config & check credentials
+        await loadConfig();
+        // 2. Render initial active transfer box state immediately
+        renderActiveTransfer(null);
+        // 3. Immediately launch polling loop (non-blocking for instant responsiveness)
+        updatePoll();
+        setInterval(updatePoll, 1000);
+        // 4. Load chats asynchronously (using token if available, or show setup state)
+        await loadChats(false);
+      } catch (err) {
+        console.error('Initialization error in Downloader:', err);
+      }
+    }
+
+    async function loadConfig() {
+      try {
+        // Main config (credentials & streaming channels)
+        const confRes = await fetch('/api/config');
+        if (confRes.ok) {
+          const mainConf = await confRes.json();
+          botToken = (mainConf.bot_token || '').trim();
+          isTokenConfigured = !!(mainConf.configured && botToken);
+          (mainConf.channel_ids || []).forEach(cid => stremioCids.add(cid));
+
+          const banner = document.getElementById('tokenWarningBanner');
+          if (!isTokenConfigured) {
+            banner.style.display = 'flex';
+          } else {
+            banner.style.display = 'none';
+          }
+        }
+
+        // Downloader config (channels, enabled flag, media dir, disk limit)
+        const res = await fetch('/api/downloader/config');
+        if (res.ok) {
+          const cfg = await res.json();
+          document.getElementById('dlEnabled').checked = !!cfg.downloader_enabled;
+          document.getElementById('mediaDir').value = cfg.media_dir || '/media';
+          document.getElementById('minDisk').value = cfg.min_free_disk_gb !== undefined ? cfg.min_free_disk_gb : 4.5;
+          document.getElementById('notifEnabled').checked = cfg.notifications_enabled !== false;
+
+          (cfg.download_channel_ids || []).forEach(cid => selectedDownloadCids.add(cid));
+        }
+      } catch (err) {
+        console.error('Error loading downloader config:', err);
+      }
+    }
+
+    async function loadChats(force = false) {
+      const container = document.getElementById('channelContainer');
+      const btn = document.getElementById('btnRefreshChats');
+
+      // State 1: Telegram Bot Token Not Configured
+      if (!isTokenConfigured) {
+        container.innerHTML = `
+          <div style="padding:1.75rem 1rem; text-align:center; background:rgba(245, 158, 11, 0.04); border:1px dashed rgba(245, 158, 11, 0.35); border-radius:10px;">
+            <div style="font-size:2rem; margin-bottom:0.4rem;">🔑</div>
+            <div style="font-weight:700; font-size:1rem; margin-bottom:0.35rem; color:#fcd34d;">Telegram Credentials Not Configured</div>
+            <div style="font-size:0.84rem; color:var(--text-muted); max-width:440px; margin:0 auto 1.25rem; line-height:1.45;">
+              Configure your Telegram API ID, API Hash, and Bot Token in Settings before selecting channels.
+            </div>
+            <a href="/settings" class="btn btn-primary btn-sm" style="display:inline-flex; text-decoration:none; padding:0.5rem 1.25rem;">⚙️ Open Settings</a>
+          </div>
+        `;
+        if (force) {
+          showToast('Please configure your Telegram Bot Token in Settings first.', 'warning');
+        }
+        return;
+      }
+
+      // State 2: Active query with spinner feedback
+      if (btn) {
+        btn.innerHTML = '<span class="spinner"></span> Refreshing...';
+        btn.disabled = true;
+      }
+      container.innerHTML = '<div style="padding:1.75rem; text-align:center; color:var(--text-muted);"><span class="spinner" style="border-top-color:var(--accent);"></span> Querying Telegram for newly added channels...</div>';
+
+      try {
+        const res = await fetch('/api/fetch-chats', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ bot_token: botToken })
+        });
+        const data = await res.json();
+        
+        if (data.error && (!data.chats || data.chats.length === 0)) {
+          container.innerHTML = `
+            <div style="padding:1.5rem; text-align:center; color:var(--error);">
+              <div style="margin-bottom:0.35rem; font-weight:700;">Telegram Error</div>
+              <div style="font-size:0.83rem; color:var(--text-muted); margin-bottom:0.85rem;">${escapeHtml(data.error)}</div>
+              <button type="button" class="btn btn-secondary btn-sm" onclick="loadChats(true)">🔄 Try Again</button>
+            </div>
+          `;
+          if (force) showToast(data.error, 'error');
+          return;
+        }
+
+        discoveredChats = data.chats || [];
+        renderChannels();
+        if (force) {
+          showToast(`✓ Discovered ${discoveredChats.length} Telegram channel(s)!`, 'success');
+        }
+      } catch (err) {
+        container.innerHTML = `<div style="padding:1.5rem; text-align:center; color:var(--error);">Failed loading channels: ${escapeHtml(err.message)}</div>`;
+        if (force) showToast('Network error loading channels: ' + err.message, 'error');
+      } finally {
+        if (btn) {
+          btn.innerHTML = '🔄 Refresh Channels';
+          btn.disabled = false;
+        }
+      }
+    }
+
+    function renderChannels() {
+      const container = document.getElementById('channelContainer');
+      if (!discoveredChats.length) {
+        container.innerHTML = `
+          <div style="padding:1.75rem 1rem; text-align:center; background:rgba(255, 255, 255, 0.02); border:1px dashed var(--input-border); border-radius:10px;">
+            <div style="font-size:2rem; margin-bottom:0.4rem;">📡</div>
+            <div style="font-weight:700; font-size:0.95rem; margin-bottom:0.35rem; color:#fff;">No Telegram Channels Detected</div>
+            <div style="font-size:0.83rem; color:var(--text-muted); max-width:480px; margin:0 auto 1.1rem; line-height:1.45;">
+              Ensure your bot is an <strong>Administrator</strong> in your download channel and send a message or post a video to it, or use the <strong>Add Channel Manually</strong> input below.
+            </div>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="loadChats(true)">🔄 Check Again</button>
+          </div>
+        `;
+        return;
+      }
+
+      container.innerHTML = discoveredChats.map(c => {
+        const isReservedByStremio = stremioCids.has(c.id);
+        const isSelected = selectedDownloadCids.has(c.id);
+        const disabledClass = isReservedByStremio ? 'disabled' : '';
+        const selectedClass = isSelected ? 'selected' : '';
+        const badgeClass = c.type === 'Channel' ? 'pill-channel' : 'pill-group';
+
+        return `
+          <div class="channel-item ${disabledClass} ${selectedClass}" onclick="handleChannelRowClick(event, ${c.id}, ${isReservedByStremio})">
+            <div class="channel-info">
+              <input type="checkbox" class="channel-checkbox" ${isSelected ? 'checked' : ''} ${isReservedByStremio ? 'disabled' : ''} onclick="event.stopPropagation()" onchange="toggleChannel(${c.id}, ${isReservedByStremio})">
+              <div>
+                <div style="font-size:0.92rem; font-weight:600;">${escapeHtml(c.title)}</div>
+                <div style="font-size:0.75rem; color:var(--text-muted);">${c.id} ${c.username ? '@' + c.username : ''}</div>
+              </div>
+            </div>
+            <div>
+              ${isReservedByStremio ? '<span style="font-size:0.75rem; color:var(--warning); margin-right:0.5rem; font-weight:600;">Reserved for Stremio</span>' : ''}
+              <span class="type-pill ${badgeClass}">${c.type}</span>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function handleChannelRowClick(e, cid, isReserved) {
+      if (e.target.tagName !== 'INPUT') {
+        toggleChannel(cid, isReserved);
+      }
+    }
+
+    function toggleChannel(cid, isReserved) {
+      if (isReserved) return;
+      if (selectedDownloadCids.has(cid)) {
+        selectedDownloadCids.delete(cid);
+      } else {
+        selectedDownloadCids.add(cid);
+      }
+      renderChannels();
+    }
+
+    async function addManualChat() {
+      if (!isTokenConfigured) {
+        showToast('Please configure your Telegram Bot Token in Settings first.', 'warning');
+        return;
+      }
+
+      const input = document.getElementById('manualChatInput');
+      const target = input.value.trim();
+      const btn = document.getElementById('btnManualAdd');
+      const hint = document.getElementById('manualHint');
+
+      if (!target) {
+        showToast('Please enter a channel ID (e.g. -100...) or @username.', 'warning');
+        input.focus();
+        return;
+      }
+
+      btn.innerHTML = '<span class="spinner"></span> Adding...';
+      btn.disabled = true;
+
+      try {
+        const res = await fetch('/api/lookup-chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ bot_token: botToken, chat_identifier: target })
+        });
+        const data = await res.json();
+        if (data.id) {
+          const existing = discoveredChats.find(c => c.id === data.id);
+          if (!existing) {
+            discoveredChats.push(data);
+          }
+          selectedDownloadCids.add(data.id);
+          renderChannels();
+          input.value = '';
+          hint.innerText = `Added "${data.title}" successfully!`;
+          hint.style.color = 'var(--success)';
+          showToast(`✓ Added "${data.title}"! Click "Save Downloader Settings" to save.`, 'success');
+        } else {
+          hint.innerText = data.error || 'Chat not found';
+          hint.style.color = 'var(--error)';
+          showToast(data.error || 'Failed to resolve channel.', 'error');
+        }
+      } catch (err) {
+        showToast('Network error: ' + err.message, 'error');
+      } finally {
+        btn.innerHTML = 'Add Channel';
+        btn.disabled = false;
+      }
+    }
+
+    async function saveDownloaderConfig() {
+      if (!isTokenConfigured) {
+        showToast('Please configure your Telegram Bot Token in Settings first.', 'warning');
+        return;
+      }
+
+      const isEnabled = document.getElementById('dlEnabled').checked;
+      if (isEnabled && selectedDownloadCids.size === 0) {
+        showToast('⚠️ Please select at least one download channel below.', 'warning');
+      }
+
+      const btn = document.getElementById('btnSaveDownloader');
+      if (btn) {
+        btn.innerHTML = '<span class="spinner"></span> Saving & Activating...';
+        btn.disabled = true;
+      }
+
+      const payload = {
+        downloader_enabled: isEnabled,
+        download_channel_ids: Array.from(selectedDownloadCids),
+        media_dir: document.getElementById('mediaDir').value.trim() || '/media',
+        min_free_disk_gb: parseFloat(document.getElementById('minDisk').value) || 4.5,
+        notifications_enabled: document.getElementById('notifEnabled').checked
+      };
+
+      try {
+        const res = await fetch('/api/downloader/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          showToast('✓ Downloader settings saved successfully!', 'success');
+          if (isEnabled && selectedDownloadCids.size > 0) {
+            triggerMediaSync(true);
+          }
+          await updatePoll();
+        } else {
+          showToast(data.detail || data.message || 'Error saving downloader settings', 'error');
+        }
+      } catch (err) {
+        showToast('Network error saving downloader settings: ' + err.message, 'error');
+      } finally {
+        if (btn) {
+          btn.innerHTML = '💾 Save Downloader Settings';
+          btn.disabled = false;
+        }
+      }
+    }
+
+    async function triggerMediaSync(silent = false) {
+      if (!isTokenConfigured) {
+        if (!silent) showToast('Please configure your Telegram Bot Token in Settings first.', 'warning');
+        return;
+      }
+      if (selectedDownloadCids.size === 0) {
+        if (!silent) showToast('Please select at least one download channel before scanning.', 'warning');
+        return;
+      }
+
+      const btn1 = document.getElementById('btnSyncMedia');
+      const btn2 = document.getElementById('btnSyncMedia2');
+      [btn1, btn2].forEach(b => {
+        if (b) {
+          b.innerHTML = '<span class="spinner"></span> Scanning...';
+          b.disabled = true;
+        }
+      });
+
+      try {
+        const res = await fetch('/api/downloader/reconcile', { method: 'POST' });
+        const data = await res.json();
+        const count = data.discovered || 0;
+        if (count > 0) {
+          showToast(`✓ Found and enqueued ${count} new media file(s)! Download started.`, 'success');
+        } else if (!silent) {
+          showToast(data.status || 'Channel scan completed. Media posts are up to date.', data.success ? 'success' : 'info');
+        }
+        await updatePoll();
+      } catch (err) {
+        if (!silent) showToast('Error scanning channel: ' + err.message, 'error');
+      } finally {
+        [btn1, btn2].forEach(b => {
+          if (b) {
+            b.innerHTML = '⚡ Scan Channel for Media';
+            b.disabled = false;
+          }
+        });
+      }
+    }
+
+    // --- Real-time Polling Engine ---
+    async function updatePoll() {
+      try {
+        // 1. Stats & active job
+        const statsRes = await fetch('/api/downloader/stats');
+        if (statsRes.ok) {
+          const stats = await statsRes.json();
+          renderActiveTransfer(stats.active_transfer || stats.active_job);
+        }
+
+        // 2. Queue
+        const qRes = await fetch('/api/downloader/queue');
+        if (qRes.ok) {
+          const qData = await qRes.json();
+          renderQueue(qData.jobs || []);
+        }
+
+        // 3. History
+        const hRes = await fetch('/api/downloader/history');
+        if (hRes.ok) {
+          const hData = await hRes.json();
+          renderHistory(hData.history || hData.jobs || []);
+        }
+      } catch (err) {}
+    }
+
+    function renderActiveTransfer(active) {
+      const badge = document.getElementById('transferBadge');
+      const filename = document.getElementById('activeFilename');
+      const fill = document.getElementById('progressFill');
+      const size = document.getElementById('transferSize');
+      const speed = document.getElementById('transferSpeed');
+      const eta = document.getElementById('transferEta');
+      const controls = document.getElementById('transferControls');
+
+      // State 1: Telegram Credentials Not Configured
+      if (!isTokenConfigured) {
+        currentActiveJobId = null;
+        badge.className = 'badge badge-paused';
+        badge.innerText = 'Setup Required';
+        filename.innerText = 'Configure Telegram credentials in Settings to activate the downloader';
+        fill.style.width = '0%';
+        size.innerText = '0 MB / 0 MB (0%)';
+        speed.innerText = '0 MB/s';
+        eta.innerText = 'ETA: --';
+        controls.style.display = 'none';
+        return;
+      }
+
+      // State 2: Active Download in progress
+      const jobId = active ? (active.id || active.job_id) : null;
+      if (active && jobId) {
+        currentActiveJobId = jobId;
+        badge.className = 'badge badge-downloading';
+        badge.innerText = active.status || 'Downloading';
+        filename.innerText = active.file_name || `Job #${jobId}`;
+
+        const dlBytes = active.downloaded_bytes !== undefined ? active.downloaded_bytes : (active.bytes_downloaded || 0);
+        const totalBytes = active.file_size || 1;
+        const pctVal = active.progress_pct !== undefined ? active.progress_pct : ((dlBytes / totalBytes) * 100);
+        const pct = Math.min(100, Math.max(0, pctVal)).toFixed(1);
+        fill.style.width = `${pct}%`;
+
+        const dlMb = (dlBytes / (1024*1024)).toFixed(1);
+        const totalMb = ((active.file_size || 0) / (1024*1024)).toFixed(1);
+        size.innerText = `${dlMb} MB / ${totalMb} MB (${pct}%)`;
+
+        const speedBytes = active.speed_bytes_sec !== undefined ? active.speed_bytes_sec : (active.download_speed || 0);
+        const speedMb = (speedBytes / (1024*1024)).toFixed(2);
+        speed.innerText = `${speedMb} MB/s`;
+
+        const etaSec = active.eta_seconds !== undefined ? active.eta_seconds : (speedBytes > 1000 ? Math.round((totalBytes - dlBytes) / speedBytes) : 0);
+        eta.innerText = etaSec > 0 ? `ETA: ${Math.floor(etaSec/60)}m ${etaSec%60}s` : 'ETA: --';
+        controls.style.display = 'flex';
+        return;
+      }
+
+      // State 3: Downloader Toggle is OFF
+      const isEnabled = document.getElementById('dlEnabled').checked;
+      if (!isEnabled) {
+        currentActiveJobId = null;
+        badge.className = 'badge badge-paused';
+        badge.innerText = 'Disabled';
+        filename.innerText = 'Automatic Local Downloader is turned off';
+        fill.style.width = '0%';
+        size.innerText = '0 MB / 0 MB (0%)';
+        speed.innerText = '0 MB/s';
+        eta.innerText = 'ETA: --';
+        controls.style.display = 'none';
+        return;
+      }
+
+      // State 4: Idle & Monitoring Channels
+      currentActiveJobId = null;
+      badge.className = 'badge badge-queued';
+      badge.innerText = 'Idle';
+      const chCount = selectedDownloadCids.size;
+      filename.innerText = chCount > 0 ? `Downloader Idle - Monitoring ${chCount} channel(s)` : 'Downloader Idle - No download channels selected';
+      fill.style.width = '0%';
+      size.innerText = '0 MB / 0 MB (0%)';
+      speed.innerText = '0 MB/s';
+      eta.innerText = 'ETA: --';
+      controls.style.display = 'none';
+    }
+
+    function renderQueue(jobs) {
+      document.getElementById('queueCountBadge').innerText = `${jobs.length} Queued`;
+      const body = document.getElementById('queueBody');
+      if (!jobs.length) {
+        body.innerHTML = '<tr><td colspan="6" style="text-align:center; color:var(--text-muted); padding:1.5rem;">Queue is empty. New media posted to selected download channels will appear here automatically.</td></tr>';
+        return;
+      }
+
+      body.innerHTML = jobs.map(j => {
+        const mb = ((j.file_size || 0) / (1024*1024)).toFixed(1);
+        const dlBytes = j.downloaded_bytes !== undefined ? j.downloaded_bytes : (j.bytes_downloaded || 0);
+        const totalBytes = j.file_size || 1;
+        const pctVal = j.progress_pct !== undefined ? j.progress_pct : ((dlBytes / totalBytes) * 100);
+        const pct = Math.min(100, Math.max(0, pctVal)).toFixed(1);
+        const badgeClass = j.status.includes('FAIL') ? 'badge-failed' : (j.status.includes('PAUSE') ? 'badge-paused' : (j.status === 'DOWNLOADING' ? 'badge-downloading' : 'badge-queued'));
+
+        return `
+          <tr>
+            <td style="font-weight:700;">#${j.queue_position || '-'}</td>
+            <td><div style="font-weight:600; max-width:260px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(j.file_name)}</div></td>
+            <td>${mb} MB</td>
+            <td><span class="badge ${badgeClass}">${j.status}</span></td>
+            <td>${pct}%</td>
+            <td>
+              <div style="display:flex; gap:0.25rem;">
+                ${j.status.includes('PAUSE') ? `<button class="btn btn-secondary btn-sm" onclick="resumeJob(${j.id})">▶️</button>` : `<button class="btn btn-secondary btn-sm" onclick="pauseJob(${j.id})">⏸️</button>`}
+                <button class="btn btn-secondary btn-sm" onclick="openMetaModal(${j.id}, '${escapeHtml(j.file_name)}')">✏️</button>
+                <button class="btn btn-danger btn-sm" onclick="deleteJob(${j.id})">🗑️</button>
+              </div>
+            </td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    function renderHistory(history) {
+      document.getElementById('historyCountBadge').innerText = `${history.length} Completed`;
+      const body = document.getElementById('historyBody');
+      if (!history.length) {
+        body.innerHTML = '<tr><td colspan="5" style="text-align:center; color:var(--text-muted); padding:1.5rem;">No completed downloads yet</td></tr>';
+        return;
+      }
+
+      body.innerHTML = history.slice(0, 20).map(h => {
+        const mb = ((h.file_size || 0) / (1024*1024)).toFixed(1);
+        const title = h.identified_title ? `${h.identified_title} (${h.identified_year || ''})` : h.file_name;
+        const date = h.completed_at ? new Date(h.completed_at * 1000).toLocaleString() : '--';
+
+        return `
+          <tr>
+            <td style="font-weight:600;">${escapeHtml(title)}</td>
+            <td><span class="type-pill pill-channel">${h.media_type || 'Movie'}</span></td>
+            <td>${mb} MB</td>
+            <td style="max-width:240px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-family:monospace; font-size:0.75rem;">${escapeHtml(h.final_path || '--')}</td>
+            <td style="color:var(--text-muted); font-size:0.75rem;">${date}</td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    async function pauseCurrentJob() {
+      if (currentActiveJobId) await pauseJob(currentActiveJobId);
+    }
+    async function skipCurrentJob() {
+      if (currentActiveJobId) {
+        await fetch(`/api/downloader/job/${currentActiveJobId}/skip`, { method: 'POST' });
+        showToast('Skipped active job #' + currentActiveJobId, 'info');
+        updatePoll();
+      }
+    }
+    async function pauseJob(id) {
+      await fetch(`/api/downloader/job/${id}/pause`, { method: 'POST' });
+      showToast('Paused job #' + id, 'info');
+      updatePoll();
+    }
+    async function resumeJob(id) {
+      await fetch(`/api/downloader/job/${id}/resume`, { method: 'POST' });
+      showToast('Resumed job #' + id, 'success');
+      updatePoll();
+    }
+    async function deleteJob(id) {
+      if (!confirm(`Delete download job #${id}?`)) return;
+      await fetch(`/api/downloader/job/${id}`, { method: 'DELETE' });
+      showToast('Deleted job #' + id, 'info');
+      updatePoll();
+    }
+
+    function openMetaModal(id, name) {
+      editingJobId = id;
+      document.getElementById('modalTitle').value = name.replace(/\.[^/.]+$/, "");
+      document.getElementById('metaModal').style.display = 'flex';
+    }
+    function closeMetaModal() {
+      document.getElementById('metaModal').style.display = 'none';
+      editingJobId = null;
+    }
+
+    async function submitMetaOverride() {
+      if (!editingJobId) return;
+      const payload = {
+        media_type: document.getElementById('modalMediaType').value,
+        title: document.getElementById('modalTitle').value.trim(),
+        year: parseInt(document.getElementById('modalYear').value) || null,
+        season: parseInt(document.getElementById('modalSeason').value) || null,
+        episode: parseInt(document.getElementById('modalEpisode').value) || null
+      };
+
+      await fetch(`/api/downloader/job/${editingJobId}/metadata`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      closeMetaModal();
+      updatePoll();
+      showToast('Metadata updated for job #' + editingJobId, 'success');
+    }
+
+    function escapeHtml(str) {
+      if (!str) return '';
+      return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    document.addEventListener('DOMContentLoaded', init);
+  </script>
+</body>
+</html>

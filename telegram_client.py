@@ -156,28 +156,37 @@ async def discover_bot_chats(bot_token: str) -> dict:
 
             await http.get(url_del_webhook, params={"drop_pending_updates": False})
 
-            params = {
-                "allowed_updates": json.dumps([
-                    "message",
-                    "edited_message",
-                    "channel_post",
-                    "edited_channel_post",
-                    "my_chat_member",
-                    "chat_member"
-                ]),
-                "limit": 100
-            }
-            upd_resp = await http.get(url_updates, params=params)
-            updates = upd_resp.json().get("result", []) if upd_resp.status_code == 200 else []
+            # Query recent updates (both latest tail with offset=-100 and earliest head)
+            all_updates = []
+            for offset_val in [-100, None]:
+                params = {
+                    "allowed_updates": json.dumps([
+                        "message",
+                        "edited_message",
+                        "channel_post",
+                        "edited_channel_post",
+                        "my_chat_member",
+                        "chat_member"
+                    ]),
+                    "limit": 100
+                }
+                if offset_val is not None:
+                    params["offset"] = offset_val
+                try:
+                    upd_resp = await http.get(url_updates, params=params)
+                    if upd_resp.status_code == 200:
+                        all_updates.extend(upd_resp.json().get("result", []))
+                except Exception:
+                    pass
 
             chats_map = {}
-            for item in updates:
+            for item in all_updates:
                 candidate_chats = []
                 for key in ("channel_post", "edited_channel_post", "message", "edited_message", "my_chat_member", "chat_member"):
                     if key in item and isinstance(item[key], dict) and "chat" in item[key]:
                         candidate_chats.append(item[key]["chat"])
-                    if key in item and isinstance(item[key], dict) and "forward_from_chat" in item[key]:
-                        candidate_chats.append(item[key]["forward_from_chat"])
+                # Note: We intentionally DO NOT inspect forward_from_chat here so external
+                # channels that messages were forwarded from do not clutter discovered chats.
 
                 for chat in candidate_chats:
                     if chat and "id" in chat:
@@ -192,6 +201,19 @@ async def discover_bot_chats(bot_token: str) -> dict:
                             "type": display_type,
                             "username": chat.get("username")
                         }
+
+            # Also ensure any channels currently saved in settings are preserved
+            from settings_manager import load_settings
+            cur_settings = load_settings()
+            saved_cids = set(cur_settings.get("channel_ids", []) + cur_settings.get("download_channel_ids", []))
+            for saved_cid in saved_cids:
+                if saved_cid not in chats_map:
+                    try:
+                        resolved = await lookup_single_chat(token, str(saved_cid))
+                        if "error" not in resolved and "id" in resolved:
+                            chats_map[saved_cid] = resolved
+                    except Exception:
+                        pass
 
             return {
                 "bot": {
@@ -518,11 +540,33 @@ async def clear_and_rescan():
     _doc_cache.clear()
     await scan_all_channels()
 
+async def trigger_stremio_scan() -> dict:
+    global scan_task, telethon_client, active_channels
+    if not telethon_client or not telethon_client.is_connected():
+        return {"status": "error", "message": "Telegram client is not connected. Configure credentials first."}
+    if not active_channels:
+        return {"status": "error", "message": "No streaming channels selected."}
+    if scan_task and not scan_task.done():
+        return {"status": "running", "message": "Scan already in progress."}
+    scan_task = asyncio.create_task(scan_all_channels())
+    return {"status": "started", "message": f"Scanning {len(active_channels)} streaming channel(s) in background."}
+
+def is_scanning_channels() -> bool:
+    global scan_task
+    return bool(scan_task and not scan_task.done())
+
 async def start_telegram_service():
     global telethon_client, active_channels, scan_task
     settings = load_settings()
     
-    if not settings.get("configured"):
+    # Require Telegram credentials (either bot token or user session)
+    has_creds = bool(
+        settings.get("api_id")
+        and settings.get("api_hash")
+        and (settings.get("bot_token") or settings.get("session_string"))
+    )
+
+    if not has_creds:
         print("[Telegram] Not configured yet. Awaiting setup via Web UI at /configure.")
         return False
 
@@ -570,24 +614,46 @@ async def start_telegram_service():
     else:
         print(f"[Telegram] Connected to MTProto as User: {me.first_name} (@{me.username or 'No username'}) [FULL HISTORY ENABLED]")
 
-    # Real-time event listener for newly posted/forwarded files
-    @telethon_client.on(events.NewMessage(chats=active_channels))
-    async def on_new_video(event):
-        try:
-            indexed = await index_single_message(event.chat_id, event.message)
-            if indexed:
-                print(f"[Realtime] New video detected in chat {event.chat_id}!")
-        except Exception as e:
-            print(f"[Realtime Error] Failed processing message: {e}")
+    # Real-time event listener for streaming channels (preserve existing Stremio functionality)
+    if active_channels:
+        @telethon_client.on(events.NewMessage(chats=active_channels))
+        async def on_new_video(event):
+            try:
+                indexed = await index_single_message(event.chat_id, event.message)
+                if indexed:
+                    print(f"[Realtime Streaming] New video detected in chat {event.chat_id}!")
+            except Exception as e:
+                print(f"[Realtime Streaming Error] Failed processing message: {e}")
 
-    # Launch background full channel history scan
-    if scan_task and not scan_task.done():
-        scan_task.cancel()
-    scan_task = asyncio.create_task(scan_all_channels())
+        # Note: We do NOT auto-scan history on container boot to prevent blocking the UI,
+        # rate-limiting TMDB, or generating log spam. Channel indexing is triggered
+        # on-demand via the Stremio UI page ("Scan Channel" button).
+        pass
+
+    # Start independent downloader module ONLY if explicitly enabled and download channels are chosen
+    dl_enabled = settings.get("downloader_enabled", False)
+    dl_channels = settings.get("download_channel_ids", [])
+    if dl_enabled and dl_channels:
+        try:
+            from downloader.service import start_downloader_service
+            await start_downloader_service(telethon_client)
+            print("[Downloader] Independent downloader module started successfully.")
+        except Exception as dl_err:
+            print(f"[Downloader Error] Failed to start downloader module: {dl_err}")
+    else:
+        print("[Downloader] Downloader is disabled or has no download channels configured. Standby mode.")
+
     return True
 
 async def stop_telegram_service():
     global telethon_client, scan_task
+    # Stop downloader module first
+    try:
+        from downloader.service import stop_downloader_service
+        await stop_downloader_service()
+    except Exception as dl_stop_err:
+        print(f"[Downloader Warning] Error stopping downloader: {dl_stop_err}")
+
     if scan_task and not scan_task.done():
         scan_task.cancel()
     if telethon_client and telethon_client.is_connected():

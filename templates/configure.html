@@ -350,11 +350,111 @@
       word-break: break-all;
       user-select: all;
     }
+
+    .navbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding-bottom: 1.5rem;
+      border-bottom: 1px solid var(--card-border);
+      margin-bottom: 2rem;
+      width: 100%;
+    }
+
+    .nav-brand {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      font-size: 1.15rem;
+      font-weight: 800;
+      color: #fff;
+      text-decoration: none;
+    }
+
+    .nav-links {
+      display: flex;
+      gap: 0.75rem;
+    }
+
+    .nav-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.45rem 0.85rem;
+      border-radius: 0.5rem;
+      font-size: 0.85rem;
+      font-weight: 600;
+      text-decoration: none;
+      color: var(--text-muted);
+      background: var(--input-bg);
+      border: 1px solid var(--input-border);
+      transition: all 0.15s;
+    }
+
+    .nav-btn:hover {
+      color: #fff;
+      border-color: #4b5563;
+    }
+
+    .nav-btn.active {
+      color: #fff;
+      background: rgba(229, 9, 20, 0.15);
+      border-color: var(--accent);
+    }
+
+    .checkbox-row {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      margin-bottom: 0.85rem;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .checkbox-row input[type="checkbox"] {
+      width: 18px;
+      height: 18px;
+      accent-color: var(--accent);
+      cursor: pointer;
+    }
+
+    .checkbox-label {
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: #e5e7eb;
+    }
+
+    .checkbox-desc {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      margin-left: 2.1rem;
+      margin-top: -0.45rem;
+      margin-bottom: 0.85rem;
+    }
+
+    .form-grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+      margin-bottom: 1rem;
+    }
   </style>
 </head>
 <body>
 
 <div class="container">
+  <!-- Nav Bar -->
+  <div class="navbar">
+    <a href="/configure" class="nav-brand">
+      <div class="logo-badge">Stremio & Archive</div>
+      <span>Telegram Media Suite</span>
+    </a>
+    <div class="nav-links">
+      <a href="/downloads" class="nav-btn">📥 Downloads Dashboard</a>
+      <a href="/configure" class="nav-btn active">⚙️ Configuration</a>
+    </div>
+  </div>
+
   <div class="header">
     <div class="logo-badge">Stremio Addon</div>
     <h1>Telegram Library</h1>
@@ -447,8 +547,118 @@
   </div>
 
   <button type="button" id="btnSaveAll" class="btn btn-primary" style="padding: 1rem; font-size: 1.05rem;">
-    💾 Save Configuration & Enable Addon
+    💾 Save Stremio Streaming Configuration
   </button>
+
+  <!-- Section 3: Dedicated Local Media Downloader & Archiving -->
+  <div class="card" style="margin-top: 2rem;">
+    <div class="card-title">
+      <span>3. Local Media Downloader & Archive</span>
+      <span class="logo-badge" style="margin-bottom: 0;">Independent Module</span>
+    </div>
+    <div class="card-subtitle">Reliable, sequential MTProto downloading with automatic resume, TMDB organization & alerts</div>
+
+    <label class="checkbox-row" for="chkDownloaderEnabled">
+      <input type="checkbox" id="chkDownloaderEnabled" checked>
+      <span class="checkbox-label">Enable Local Media Downloader</span>
+    </label>
+    <div class="checkbox-desc">Monitors selected download channels, enqueues media and downloads sequentially.</div>
+
+    <!-- Independent Download Channel Selection -->
+    <div class="form-group" style="margin-top: 1.25rem;">
+      <label>Download Channels (Independent from Stremio)</label>
+      <div class="card-subtitle" style="margin-bottom: 0.65rem;">Choose channels to archive locally. A channel can be used for streaming, downloading, or both.</div>
+      
+      <input type="text" id="downloadChatSearch" class="search-input" placeholder="Filter download channels by name...">
+
+      <div id="downloadChatsList" class="chats-list" style="max-height: 220px;">
+        <div style="padding: 1rem; text-align: center; color: var(--text-muted); font-size: 0.85rem;">
+          Connect your bot in Step 1 above to load available channels.
+        </div>
+      </div>
+
+      <div class="bottom-bar">
+        <span id="downloadSelectedCount" class="selection-count">0 download channels selected</span>
+      </div>
+    </div>
+
+    <!-- Media Storage Directory -->
+    <div class="form-group">
+      <label for="dlMediaDir">Media Storage Root Directory</label>
+      <input type="text" id="dlMediaDir" placeholder="e.g. /media or data/media">
+      <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.35rem;">
+        Downloads will be organized into <code>Movies/</code>, <code>TV Shows/</code>, and <code>Unsorted/</code>. Temporary files live in <code>.downloads/</code>.
+      </div>
+    </div>
+
+    <!-- Downloader Parameters Grid -->
+    <div class="form-grid-2">
+      <div class="form-group">
+        <label for="dlMaxConcurrent">Max Concurrent Downloads</label>
+        <input type="number" id="dlMaxConcurrent" value="1" min="1" max="5">
+      </div>
+      <div class="form-group">
+        <label for="dlMinFreeDisk">Min Free Disk Space (GB)</label>
+        <input type="number" id="dlMinFreeDisk" value="5.0" step="0.5" min="0.5">
+      </div>
+      <div class="form-group">
+        <label for="dlMaxRetries">Max Download Retries</label>
+        <input type="number" id="dlMaxRetries" value="5" min="1" max="20">
+      </div>
+      <div class="form-group">
+        <label for="dlReconcileInterval">History Reconciliation (Minutes)</label>
+        <input type="number" id="dlReconcileInterval" value="30" min="5" max="1440">
+      </div>
+    </div>
+
+    <!-- Feature Toggles -->
+    <div style="margin-top: 0.5rem;">
+      <label class="checkbox-row" for="chkAutoTmdb">
+        <input type="checkbox" id="chkAutoTmdb" checked>
+        <span class="checkbox-label">Automatic TMDB Identification</span>
+      </label>
+      <div class="checkbox-desc">Validates title, release year, season/episode and matches TMDB metadata.</div>
+
+      <label class="checkbox-row" for="chkAutoOrganize">
+        <input type="checkbox" id="chkAutoOrganize" checked>
+        <span class="checkbox-label">Automatic Library Folder Organization</span>
+      </label>
+      <div class="checkbox-desc">Places movies in <code>Movies/Title (Year)/</code> and TV in <code>TV Shows/Title/Season XX/</code>.</div>
+
+      <label class="checkbox-row" for="chkStartupRecovery">
+        <input type="checkbox" id="chkStartupRecovery" checked>
+        <span class="checkbox-label">Automatic Startup & Crash Recovery</span>
+      </label>
+      <div class="checkbox-desc">Recovers interrupted downloads from verified chunk offsets after restarts or power failures.</div>
+
+      <label class="checkbox-row" for="chkHistoryReconcile">
+        <input type="checkbox" id="chkHistoryReconcile" checked>
+        <span class="checkbox-label">Channel History Reconciliation</span>
+      </label>
+      <div class="checkbox-desc">Scans channels to discover posts sent while the server was offline.</div>
+
+      <label class="checkbox-row" for="chkNotifications">
+        <input type="checkbox" id="chkNotifications" checked>
+        <span class="checkbox-label">Telegram Completion Notifications</span>
+      </label>
+      <div class="checkbox-desc">Replies to the original media post with archival confirmation when download commits.</div>
+    </div>
+
+    <!-- Notification Fallback -->
+    <div class="form-group" style="margin-top: 0.75rem;">
+      <label for="dlNotificationChat">Notification Fallback Chat ID (Optional)</label>
+      <input type="number" id="dlNotificationChat" placeholder="e.g. -100... or your user/group ID if reply fails">
+    </div>
+
+    <div style="display: flex; gap: 0.75rem; margin-top: 1.5rem;">
+      <button type="button" id="btnSaveDownloader" class="btn btn-primary" style="flex: 2; padding: 0.85rem;">
+        💾 Save Downloader Settings
+      </button>
+      <a href="/downloads" class="btn btn-secondary" style="flex: 1; padding: 0.85rem; text-decoration: none;">
+        📥 Open Dashboard
+      </a>
+    </div>
+  </div>
 
   <!-- Install in Stremio Panel -->
   <div id="installBox" class="install-box">
@@ -477,6 +687,7 @@
 <script>
   let discoveredChats = [];
   let selectedChatIds = new Set();
+  let selectedDownloadChatIds = new Set();
   let publicUrl = "";
   let isTmdbVerified = false;
 
@@ -503,7 +714,6 @@
       if (data.bot_token) document.getElementById("botToken").value = data.bot_token;
       if (data.tmdb_api_key) {
         document.getElementById("tmdbKey").value = data.tmdb_api_key;
-        // Verify stored TMDB key
         verifyTmdbKey(true);
       }
 
@@ -511,7 +721,30 @@
         data.channel_ids.forEach(id => selectedChatIds.add(Number(id)));
       }
 
-      // If bot token is already available (from .env or previous save), auto-fetch channels!
+      // Load Downloader settings
+      try {
+        const dlRes = await fetch("/api/downloader/config");
+        const dlData = await dlRes.json();
+        if (dlData.download_channel_ids && dlData.download_channel_ids.length > 0) {
+          dlData.download_channel_ids.forEach(id => selectedDownloadChatIds.add(Number(id)));
+        }
+        if (dlData.media_dir) document.getElementById("dlMediaDir").value = dlData.media_dir;
+        if (dlData.downloader_enabled !== undefined) document.getElementById("chkDownloaderEnabled").checked = dlData.downloader_enabled;
+        if (dlData.max_concurrent_downloads) document.getElementById("dlMaxConcurrent").value = dlData.max_concurrent_downloads;
+        if (dlData.min_free_disk_gb) document.getElementById("dlMinFreeDisk").value = dlData.min_free_disk_gb;
+        if (dlData.max_retries) document.getElementById("dlMaxRetries").value = dlData.max_retries;
+        if (dlData.reconciliation_interval_min) document.getElementById("dlReconcileInterval").value = dlData.reconciliation_interval_min;
+        if (dlData.auto_tmdb_identify !== undefined) document.getElementById("chkAutoTmdb").checked = dlData.auto_tmdb_identify;
+        if (dlData.auto_organize !== undefined) document.getElementById("chkAutoOrganize").checked = dlData.auto_organize;
+        if (dlData.startup_recovery !== undefined) document.getElementById("chkStartupRecovery").checked = dlData.startup_recovery;
+        if (dlData.history_reconciliation !== undefined) document.getElementById("chkHistoryReconcile").checked = dlData.history_reconciliation;
+        if (dlData.notifications_enabled !== undefined) document.getElementById("chkNotifications").checked = dlData.notifications_enabled;
+        if (dlData.notification_chat_id) document.getElementById("dlNotificationChat").value = dlData.notification_chat_id;
+      } catch (dlErr) {
+        console.log("No downloader config loaded yet:", dlErr);
+      }
+
+      // If bot token is already available, auto-fetch channels!
       if (data.bot_token) {
         fetchChats();
       }
@@ -550,25 +783,26 @@
       }
 
       const fetched = data.chats || [];
-      // Merge with discoveredChats avoiding duplicates
       fetched.forEach(fc => {
         if (!discoveredChats.some(c => c.id === fc.id)) {
           discoveredChats.push(fc);
         }
       });
       
-      // Keep previously selected chats in list
+      // Preserve previously selected streaming & downloading chats in list
       selectedChatIds.forEach(id => {
         if (!discoveredChats.some(c => c.id === id)) {
-          discoveredChats.push({
-            id: id,
-            title: `Channel ${id}`,
-            type: "Channel"
-          });
+          discoveredChats.push({ id: id, title: `Channel ${id}`, type: "Channel" });
+        }
+      });
+      selectedDownloadChatIds.forEach(id => {
+        if (!discoveredChats.some(c => c.id === id)) {
+          discoveredChats.push({ id: id, title: `Channel ${id}`, type: "Channel" });
         }
       });
 
       renderChats();
+      renderDownloadChats();
       document.getElementById("chatsArea").style.display = "block";
       
       if (discoveredChats.length > 0) {
@@ -618,7 +852,6 @@
         return;
       }
 
-      // Add to discovered chats
       const existingIdx = discoveredChats.findIndex(c => c.id === data.id);
       if (existingIdx >= 0) {
         discoveredChats[existingIdx] = data;
@@ -626,10 +859,10 @@
         discoveredChats.unshift(data);
       }
 
-      // Automatically select it!
       selectedChatIds.add(Number(data.id));
       document.getElementById("directChannelInput").value = "";
       renderChats();
+      renderDownloadChats();
       showAlert(`✓ Successfully added and selected "${data.title}" (${data.type})!`);
     } catch (err) {
       showAlert("Failed to verify channel: " + err.message, true);
@@ -639,6 +872,7 @@
     }
   }
 
+  // Render Streaming Channels
   function renderChats() {
     const list = document.getElementById("chatsList");
     const filter = document.getElementById("chatSearch").value.toLowerCase();
@@ -655,37 +889,50 @@
     }
 
     filtered.forEach(chat => {
-      const isChecked = selectedChatIds.has(Number(chat.id));
+      const cid = Number(chat.id);
+      const isChecked = selectedChatIds.has(cid);
+      const isUsedByDownload = selectedDownloadChatIds.has(cid);
       const div = document.createElement("div");
       div.className = "chat-item";
+      if (isUsedByDownload) {
+        div.style.opacity = "0.5";
+        div.style.cursor = "not-allowed";
+      }
       
       let badgeClass = "badge-chat";
       if (chat.type === "Channel") badgeClass = "badge-channel";
       else if (chat.type === "Group") badgeClass = "badge-group";
 
+      const conflictBadge = isUsedByDownload 
+        ? `<span class="badge" style="background: rgba(245, 158, 11, 0.2); color: #fbbf24;">Used for Downloader</span>` 
+        : "";
+
       div.innerHTML = `
-        <input type="checkbox" id="chk_${chat.id}" ${isChecked ? "checked" : ""}>
+        <input type="checkbox" id="chk_${chat.id}" ${isChecked ? "checked" : ""} ${isUsedByDownload ? "disabled" : ""}>
         <div class="chat-info">
           <div class="chat-title">
             <span>${escapeHtml(chat.title)}</span>
             <span class="badge ${badgeClass}">${chat.type}</span>
+            ${conflictBadge}
           </div>
-          <div class="chat-meta">ID: ${chat.id}</div>
+          <div class="chat-meta">ID: ${chat.id} ${isUsedByDownload ? "• (Cannot be selected: assigned to downloader)" : ""}</div>
         </div>
       `;
 
       div.addEventListener("click", (e) => {
+        if (isUsedByDownload) return;
         if (e.target.tagName !== "INPUT") {
           const chk = div.querySelector("input[type='checkbox']");
           chk.checked = !chk.checked;
         }
         const chk = div.querySelector("input[type='checkbox']");
         if (chk.checked) {
-          selectedChatIds.add(Number(chat.id));
+          selectedChatIds.add(cid);
         } else {
-          selectedChatIds.delete(Number(chat.id));
+          selectedChatIds.delete(cid);
         }
         updateSelectionCount();
+        renderDownloadChats();
       });
 
       list.appendChild(div);
@@ -695,7 +942,82 @@
   }
 
   function updateSelectionCount() {
-    document.getElementById("selectedCount").textContent = `${selectedChatIds.size} selected`;
+    document.getElementById("selectedCount").textContent = `${selectedChatIds.size} streaming channels selected`;
+  }
+
+  // Render Download Channels (Strictly independent and mutually exclusive from streaming)
+  function renderDownloadChats() {
+    const list = document.getElementById("downloadChatsList");
+    const filter = (document.getElementById("downloadChatSearch") ? document.getElementById("downloadChatSearch").value : "").toLowerCase();
+    list.innerHTML = "";
+
+    const filtered = discoveredChats.filter(c => c.title.toLowerCase().includes(filter));
+
+    if (filtered.length === 0) {
+      list.innerHTML = `<div style="padding: 1.5rem; text-align: center; color: var(--text-muted); font-size: 0.85rem;">
+        No chats available. Connect your bot in Step 1 to discover channels!
+      </div>`;
+      return;
+    }
+
+    filtered.forEach(chat => {
+      const cid = Number(chat.id);
+      const isChecked = selectedDownloadChatIds.has(cid);
+      const isUsedByStreaming = selectedChatIds.has(cid);
+      const div = document.createElement("div");
+      div.className = "chat-item";
+      if (isUsedByStreaming) {
+        div.style.opacity = "0.5";
+        div.style.cursor = "not-allowed";
+      }
+      
+      let badgeClass = "badge-chat";
+      if (chat.type === "Channel") badgeClass = "badge-channel";
+      else if (chat.type === "Group") badgeClass = "badge-group";
+
+      const conflictBadge = isUsedByStreaming 
+        ? `<span class="badge" style="background: rgba(59, 130, 246, 0.2); color: #60a5fa;">Used for Streaming</span>` 
+        : "";
+
+      div.innerHTML = `
+        <input type="checkbox" id="dl_chk_${chat.id}" ${isChecked ? "checked" : ""} ${isUsedByStreaming ? "disabled" : ""}>
+        <div class="chat-info">
+          <div class="chat-title">
+            <span>${escapeHtml(chat.title)}</span>
+            <span class="badge ${badgeClass}">${chat.type}</span>
+            ${conflictBadge}
+          </div>
+          <div class="chat-meta">ID: ${chat.id} ${isUsedByStreaming ? "• (Cannot be selected: assigned to Stremio streaming)" : ""}</div>
+        </div>
+      `;
+
+      div.addEventListener("click", (e) => {
+        if (isUsedByStreaming) return;
+        if (e.target.tagName !== "INPUT") {
+          const chk = div.querySelector("input[type='checkbox']");
+          chk.checked = !chk.checked;
+        }
+        const chk = div.querySelector("input[type='checkbox']");
+        if (chk.checked) {
+          selectedDownloadChatIds.add(cid);
+        } else {
+          selectedDownloadChatIds.delete(cid);
+        }
+        updateDownloadSelectionCount();
+        renderChats();
+      });
+
+      list.appendChild(div);
+    });
+
+    updateDownloadSelectionCount();
+  }
+
+  function updateDownloadSelectionCount() {
+    const el = document.getElementById("downloadSelectedCount");
+    if (el) {
+      el.textContent = `${selectedDownloadChatIds.size} download channels selected`;
+    }
   }
 
   function escapeHtml(str) {
@@ -845,6 +1167,48 @@
     updateLibraryStats();
   }
 
+  // Save Downloader Configuration independently
+  async function saveDownloaderConfig() {
+    const btn = document.getElementById("btnSaveDownloader");
+    btn.disabled = true;
+    btn.textContent = "⏳ Saving Downloader Settings...";
+
+    const payload = {
+      downloader_enabled: document.getElementById("chkDownloaderEnabled").checked,
+      download_channel_ids: Array.from(selectedDownloadChatIds),
+      media_dir: document.getElementById("dlMediaDir").value.trim() || null,
+      max_concurrent_downloads: parseInt(document.getElementById("dlMaxConcurrent").value) || 1,
+      min_free_disk_gb: parseFloat(document.getElementById("dlMinFreeDisk").value) || 5.0,
+      max_retries: parseInt(document.getElementById("dlMaxRetries").value) || 5,
+      reconciliation_interval_min: parseInt(document.getElementById("dlReconcileInterval").value) || 30,
+      auto_tmdb_identify: document.getElementById("chkAutoTmdb").checked,
+      auto_organize: document.getElementById("chkAutoOrganize").checked,
+      startup_recovery: document.getElementById("chkStartupRecovery").checked,
+      history_reconciliation: document.getElementById("chkHistoryReconcile").checked,
+      notifications_enabled: document.getElementById("chkNotifications").checked,
+      notification_chat_id: parseInt(document.getElementById("dlNotificationChat").value) || null
+    };
+
+    try {
+      const res = await fetch("/api/downloader/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      if (data.error) {
+        showAlert(data.error, true);
+      } else {
+        showAlert("✅ Downloader settings saved successfully! Monitored channels updated.");
+      }
+    } catch (e) {
+      showAlert("Error saving downloader settings: " + e.message, true);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "💾 Save Downloader Settings";
+    }
+  }
+
   // Event Listeners
   document.getElementById("btnFetchChats").addEventListener("click", fetchChats);
   document.getElementById("btnRefreshChats").addEventListener("click", fetchChats);
@@ -857,7 +1221,11 @@
   });
   document.getElementById("btnVerifyTmdb").addEventListener("click", () => verifyTmdbKey(false));
   document.getElementById("btnSaveAll").addEventListener("click", saveConfig);
+  document.getElementById("btnSaveDownloader").addEventListener("click", saveDownloaderConfig);
   document.getElementById("chatSearch").addEventListener("input", renderChats);
+  if (document.getElementById("downloadChatSearch")) {
+    document.getElementById("downloadChatSearch").addEventListener("input", renderDownloadChats);
+  }
 
   document.getElementById("btnRescanLibrary").addEventListener("click", async () => {
     const btn = document.getElementById("btnRescanLibrary");

@@ -958,16 +958,16 @@ async def tmdb_get_with_retry(client: httpx.AsyncClient, url: str, params: dict,
                 return resp.json()
             elif resp.status_code == 429:
                 wait_s = 1.5 * (attempt + 1)
-                print(f"[TMDB 429 RateLimit] Backing off for {wait_s}s...")
                 await asyncio.sleep(wait_s)
                 continue
             elif resp.status_code == 404:
                 return None
             else:
-                print(f"[TMDB Note] Status {resp.status_code} on {url}")
+                pass
         except Exception as e:
             wait_s = 0.8 * (attempt + 1)
-            print(f"[TMDB Retry {attempt + 1}/{max_retries}] Network notice on {url}: {e}. Retrying in {wait_s}s...")
+            if attempt == max_retries - 1:
+                print(f"[TMDB Notice] Request failed after {max_retries} attempts on {url}: {e}")
             await asyncio.sleep(wait_s)
     return None
 

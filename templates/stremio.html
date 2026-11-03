@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Stremio Add-on Configuration - Telegram Media Suite</title>
+  <style>
+    :root {
+      --bg: #090d16;
+      --card-bg: #121826;
+      --card-border: #1e293b;
+      --accent: #e50914;
+      --accent-hover: #b80710;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+      --input-bg: #1e293b;
+      --input-border: #334155;
+      --success: #10b981;
+      --warning: #f59e0b;
+      --error: #ef4444;
+      --badge-channel: #3b82f6;
+      --badge-group: #10b981;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+    body { background-color: var(--bg); color: var(--text); min-height: 100vh; display: flex; flex-direction: column; align-items: center; padding-bottom: 3rem; }
+
+    /* Top Navigation Bar */
+    .top-nav { width: 100%; background: #0f172a; border-bottom: 1px solid #1e293b; padding: 0.75rem 1.5rem; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 100; }
+    .brand { display: flex; align-items: center; gap: 0.75rem; font-weight: 800; font-size: 1.15rem; letter-spacing: -0.02em; color: #fff; }
+    .brand-icon { background: linear-gradient(135deg, #e50914, #ff5722); border-radius: 8px; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; font-size: 1rem; }
+    .nav-links { display: flex; gap: 0.5rem; }
+    .nav-link { padding: 0.5rem 1rem; border-radius: 8px; text-decoration: none; color: var(--text-muted); font-size: 0.9rem; font-weight: 600; transition: all 0.2s; display: flex; align-items: center; gap: 0.4rem; }
+    .nav-link:hover { color: #fff; background: rgba(255, 255, 255, 0.05); }
+    .nav-link.active { color: #fff; background: rgba(229, 9, 20, 0.2); border: 1px solid rgba(229, 9, 20, 0.4); }
+
+    .container { width: 100%; max-width: 820px; padding: 2rem 1rem; }
+    .page-header { text-align: center; margin-bottom: 2rem; }
+    .page-header h1 { font-size: 1.85rem; font-weight: 800; letter-spacing: -0.03em; margin-bottom: 0.4rem; }
+    .page-header p { color: var(--text-muted); font-size: 0.95rem; }
+
+    .card { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 12px; padding: 1.75rem; margin-bottom: 1.5rem; box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3); }
+    .card-title { font-size: 1.15rem; font-weight: 700; margin-bottom: 0.35rem; display: flex; align-items: center; justify-content: space-between; }
+    .card-subtitle { font-size: 0.85rem; color: var(--text-muted); margin-bottom: 1.25rem; line-height: 1.4; }
+
+    .btn { padding: 0.65rem 1.25rem; border-radius: 8px; font-size: 0.9rem; font-weight: 600; cursor: pointer; border: none; transition: all 0.2s; display: inline-flex; align-items: center; gap: 0.4rem; justify-content: center; text-decoration: none; }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-primary:hover { background: var(--accent-hover); }
+    .btn-secondary { background: #334155; color: #fff; }
+    .btn-secondary:hover { background: #475569; }
+    .btn-danger { background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.4); color: var(--error); }
+    .btn-danger:hover { background: rgba(239, 68, 68, 0.3); }
+
+    .channel-list { display: flex; flex-direction: column; gap: 0.5rem; max-height: 280px; overflow-y: auto; padding-right: 0.25rem; }
+    .channel-item { display: flex; align-items: center; justify-content: space-between; padding: 0.75rem 1rem; background: var(--input-bg); border: 1px solid var(--input-border); border-radius: 8px; cursor: pointer; transition: all 0.2s; }
+    .channel-item:hover:not(.disabled) { border-color: var(--accent); }
+    .channel-item.selected { border-color: var(--accent); background: rgba(229, 9, 20, 0.08); }
+    .channel-item.disabled { opacity: 0.45; cursor: not-allowed; background: rgba(15, 23, 42, 0.4); }
+    .channel-info { display: flex; align-items: center; gap: 0.75rem; }
+    .channel-checkbox { width: 18px; height: 18px; accent-color: var(--accent); cursor: pointer; }
+    .channel-title { font-size: 0.92rem; font-weight: 600; }
+    .channel-meta { font-size: 0.75rem; color: var(--text-muted); }
+
+    .type-pill { padding: 0.15rem 0.5rem; border-radius: 9999px; font-size: 0.7rem; font-weight: 700; text-transform: uppercase; }
+    .pill-channel { background: rgba(59, 130, 246, 0.2); color: var(--badge-channel); }
+    .pill-group { background: rgba(16, 185, 129, 0.2); color: var(--badge-group); }
+
+    .stats-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin-bottom: 1.25rem; }
+    .stat-box { background: var(--input-bg); border: 1px solid var(--input-border); border-radius: 8px; padding: 1rem; text-align: center; }
+    .stat-val { font-size: 1.6rem; font-weight: 800; color: #fff; margin-bottom: 0.2rem; }
+    .stat-lbl { font-size: 0.78rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+
+    .alert { padding: 0.85rem 1rem; border-radius: 8px; font-size: 0.88rem; margin-bottom: 1.25rem; display: none; line-height: 1.4; }
+    .alert-success { background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.3); color: #6ee7b7; }
+    .alert-error { background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.3); color: #fca5a5; }
+
+    /* Spinners & Animations */
+    @keyframes spin { 100% { transform: rotate(360deg); } }
+    .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid rgba(255,255,255,0.3); border-top-color: #fff; border-radius: 50%; animation: spin 0.8s linear infinite; vertical-align: middle; margin-right: 0.35rem; }
+    .btn.loading { pointer-events: none; opacity: 0.8; }
+
+    .install-box { background: linear-gradient(135deg, rgba(229, 9, 20, 0.12), rgba(255, 87, 34, 0.08)); border: 1px solid rgba(229, 9, 20, 0.3); border-radius: 12px; padding: 1.5rem; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1rem; margin-bottom: 1.5rem; }
+
+    /* Modern Floating Toast Notification System */
+    #toastContainer { position: fixed; top: 1.25rem; right: 1.25rem; z-index: 9999; display: flex; flex-direction: column; gap: 0.65rem; pointer-events: none; }
+    .toast { pointer-events: auto; min-width: 300px; max-width: 420px; background: #1e293b; border-radius: 10px; padding: 0.85rem 1.15rem; color: #fff; font-size: 0.88rem; box-shadow: 0 10px 30px rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; border-left: 4px solid var(--accent); transform: translateX(120%); transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.25s; opacity: 0; }
+    .toast.show { transform: translateX(0); opacity: 1; }
+    .toast-success { border-left-color: var(--success); background: #132223; }
+    .toast-error { border-left-color: var(--error); background: #261619; }
+    .toast-info { border-left-color: var(--accent); }
+    .toast-content { display: flex; align-items: center; gap: 0.6rem; line-height: 1.4; flex: 1; }
+    .toast-icon { font-size: 1.15rem; flex-shrink: 0; }
+    .toast-close { background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 1.1rem; line-height: 1; padding: 0.2rem; }
+    .toast-close:hover { color: #fff; }
+  </style>
+</head>
+<body>
+
+  <!-- Floating Toast Notification System -->
+  <div id="toastContainer"></div>
+
+  <!-- Top Nav Bar -->
+  <nav class="top-nav">
+    <div class="brand">
+      <div class="brand-icon">📺</div>
+      <span>Telegram Media Suite</span>
+    </div>
+    <div class="nav-links">
+      <a href="/settings" class="nav-link">⚙️ Settings & APIs</a>
+      <a href="/downloads" class="nav-link">⬇️ Media Downloader</a>
+      <a href="/stremio" class="nav-link active">📺 Stremio Add-on</a>
+    </div>
+  </nav>
+
+  <div class="container">
+    <div class="page-header">
+      <h1>Stremio Streaming Add-on</h1>
+      <p>Stream high-definition videos from your Telegram streaming channel directly into Stremio. Independent from the downloader module.</p>
+    </div>
+
+    <div id="statusAlert" class="alert"></div>
+
+    <!-- Quick Install Card -->
+    <div class="install-box">
+      <div>
+        <div style="font-size:1.15rem; font-weight:800; margin-bottom:0.3rem;">Stremio Add-on Manifest</div>
+        <div style="font-size:0.85rem; color:var(--text-muted);" id="manifestUrlText">Loading manifest URL...</div>
+      </div>
+      <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
+        <button type="button" class="btn btn-secondary" onclick="copyManifestUrl()">📋 Copy URL</button>
+        <a id="btnInstallStremio" href="#" class="btn btn-primary">🎬 Install to Stremio</a>
+      </div>
+    </div>
+
+    <!-- Channel Selection Card -->
+    <div class="card">
+      <div class="card-title">
+        <span>1. Select Stremio Streaming Channel</span>
+        <button type="button" class="btn btn-secondary" id="btnRefreshChats" style="padding:0.35rem 0.75rem; font-size:0.8rem;" onclick="loadChats(true)">
+          🔄 Refresh Channels
+        </button>
+      </div>
+      <div class="card-subtitle">
+        Select which Telegram channel(s) will be indexed and streamed in Stremio. Channels selected here cannot be used for local downloading.
+      </div>
+
+      <div id="channelContainer" class="channel-list">
+        <div style="padding:1.5rem; text-align:center; color:var(--text-muted); font-size:0.9rem;">
+          Loading discovered channels...
+        </div>
+      </div>
+
+      <!-- Manual Channel Addition -->
+      <div style="margin-top:0.85rem; padding:0.85rem; background:rgba(255,255,255,0.02); border:1px dashed var(--input-border); border-radius:8px;">
+        <div style="font-size:0.82rem; font-weight:600; margin-bottom:0.4rem; color:#cbd5e1;">➕ Add Channel Manually (by ID or @username)</div>
+        <div style="display:flex; gap:0.5rem;">
+          <input type="text" id="manualChatInput" class="form-input" style="flex:1;" placeholder="e.g. -1004474080975 or @channel_username">
+          <button type="button" class="btn btn-secondary" id="btnManualAdd" onclick="addManualChat()">Add Channel</button>
+        </div>
+        <div class="form-hint" id="manualHint">Enter the channel ID (starts with -100) or public @username to add it immediately.</div>
+      </div>
+
+      <div style="margin-top:1.25rem; display:flex; justify-content:flex-end;">
+        <button type="button" class="btn btn-primary" id="btnSaveStremio" onclick="saveStreamingChannels()">
+          💾 Save Streaming Channels
+        </button>
+      </div>
+    </div>
+
+    <!-- Stremio Indexer & Catalog Card -->
+    <div class="card">
+      <div class="card-title">
+        <span>2. Catalog Index & Sync</span>
+        <span id="scanStatusBadge" style="font-size:0.8rem; color:var(--text-muted);">Idle</span>
+      </div>
+      <div class="card-subtitle">
+        The add-on captures new videos automatically when posted. You can also scan your channel's existing history on demand.
+      </div>
+
+      <div class="stats-grid">
+        <div class="stat-box">
+          <div class="stat-val" id="statMovies">0</div>
+          <div class="stat-lbl">Movies Indexed</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-val" id="statSeries">0</div>
+          <div class="stat-lbl">Episodes Indexed</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-val" id="statTotal">0</div>
+          <div class="stat-lbl">Total Media Files</div>
+        </div>
+      </div>
+
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem;">
+        <button type="button" class="btn btn-danger" onclick="clearCatalog()">
+          🧹 Clear Catalog Index
+        </button>
+        <button type="button" class="btn btn-secondary" id="btnScanHistory" onclick="triggerScan()">
+          🔄 Scan Channel History Now
+        </button>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    let discoveredChats = [];
+    let selectedStreamingCids = new Set();
+    let downloadCids = new Set();
+    let manifestUrl = "";
+
+    async function init() {
+      await loadConfig();
+      await loadChats(false);
+      await loadStats();
+      setInterval(loadStats, 5000);
+    }
+
+    async function loadConfig() {
+      try {
+        const res = await fetch('/api/config');
+        if (!res.ok) return;
+        const cfg = await res.json();
+        (cfg.channel_ids || []).forEach(cid => selectedStreamingCids.add(cid));
+        (cfg.download_channel_ids || []).forEach(cid => downloadCids.add(cid));
+
+        manifestUrl = `${cfg.public_url}/manifest.json`;
+        document.getElementById('manifestUrlText').innerText = manifestUrl;
+        const stremioProtocol = manifestUrl.replace(/^https?:\/\//i, 'stremio://');
+        document.getElementById('btnInstallStremio').href = stremioProtocol;
+      } catch (err) {
+        console.error('Error loading config:', err);
+      }
+    }
+
+    async function loadChats(force = false) {
+      const container = document.getElementById('channelContainer');
+      const btn = document.getElementById('btnRefreshChats');
+
+      if (btn && force) {
+        btn.innerHTML = '<span class="spinner"></span> Refreshing...';
+        btn.classList.add('loading');
+        container.innerHTML = '<div style="padding:1.5rem; text-align:center; color:var(--text-muted);"><span class="spinner" style="border-top-color:var(--accent);"></span> Querying Telegram for newly added channels...</div>';
+      }
+
+      try {
+        const cfgRes = await fetch('/api/config');
+        const cfg = await cfgRes.json();
+        if (!cfg.bot_token) {
+          container.innerHTML = '<div style="padding:1.5rem; text-align:center; color:var(--text-muted);">Please configure and verify your Bot Token in the <a href="/settings" style="color:var(--accent);">Settings</a> page first.</div>';
+          return;
+        }
+
+        const res = await fetch('/api/fetch-chats', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ bot_token: cfg.bot_token })
+        });
+        const data = await res.json();
+        discoveredChats = data.chats || [];
+
+        renderChannels();
+        if (force) {
+          showAlert(`Channel list updated: ${discoveredChats.length} channel(s) found!`, 'success');
+        }
+      } catch (err) {
+        container.innerHTML = '<div style="padding:1.5rem; text-align:center; color:var(--error);">Failed to load channels: ' + err.message + '</div>';
+      } finally {
+        if (btn) {
+          btn.innerHTML = '🔄 Refresh Channels';
+          btn.classList.remove('loading');
+        }
+      }
+    }
+
+    async function addManualChat() {
+      const input = document.getElementById('manualChatInput');
+      const target = input.value.trim();
+      const btn = document.getElementById('btnManualAdd');
+      const hint = document.getElementById('manualHint');
+
+      if (!target) {
+        showAlert('Please enter a channel ID (e.g. -100...) or @username.', 'error');
+        return;
+      }
+
+      btn.innerHTML = '<span class="spinner"></span> Adding...';
+      btn.disabled = true;
+
+      try {
+        const cfgRes = await fetch('/api/config');
+        const cfg = await cfgRes.json();
+        const res = await fetch('/api/lookup-chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ bot_token: cfg.bot_token, chat_identifier: target })
+        });
+        const data = await res.json();
+        if (data.id) {
+          const existing = discoveredChats.find(c => c.id === data.id);
+          if (!existing) {
+            discoveredChats.push(data);
+          }
+          selectedStreamingCids.add(data.id);
+          renderChannels();
+          input.value = '';
+          hint.innerText = `Added "${data.title}" successfully!`;
+          hint.style.color = 'var(--success)';
+          showAlert(`Successfully added and selected "${data.title}" (${data.id})! Click "Save Streaming Channels" to save.`, 'success');
+        } else {
+          hint.innerText = data.error || 'Chat not found';
+          hint.style.color = 'var(--error)';
+          showAlert(data.error || 'Failed to resolve channel.', 'error');
+        }
+      } catch (err) {
+        showAlert('Network error: ' + err.message, 'error');
+      } finally {
+        btn.innerHTML = 'Add Channel';
+        btn.disabled = false;
+      }
+    }
+
+    function renderChannels() {
+      const container = document.getElementById('channelContainer');
+      if (!discoveredChats.length) {
+        container.innerHTML = '<div style="padding:1.5rem; text-align:center; color:var(--text-muted);">No channels discovered yet. Make sure your bot is an Admin in your channel and post a message to it!</div>';
+        return;
+      }
+
+      container.innerHTML = discoveredChats.map(c => {
+        const isReservedByDownloader = downloadCids.has(c.id);
+        const isSelected = selectedStreamingCids.has(c.id);
+        const disabledClass = isReservedByDownloader ? 'disabled' : '';
+        const selectedClass = isSelected ? 'selected' : '';
+        const badgeClass = c.type === 'Channel' ? 'pill-channel' : 'pill-group';
+
+        return `
+          <div class="channel-item ${disabledClass} ${selectedClass}" onclick="handleChannelRowClick(event, ${c.id}, ${isReservedByDownloader})">
+            <div class="channel-info">
+              <input type="checkbox" class="channel-checkbox" ${isSelected ? 'checked' : ''} ${isReservedByDownloader ? 'disabled' : ''} onclick="event.stopPropagation()" onchange="toggleChannel(${c.id}, ${isReservedByDownloader})">
+              <div>
+                <div class="channel-title">${escapeHtml(c.title)}</div>
+                <div class="channel-meta">${c.id} ${c.username ? '@' + c.username : ''}</div>
+              </div>
+            </div>
+            <div>
+              ${isReservedByDownloader ? '<span style="font-size:0.75rem; color:var(--warning); margin-right:0.5rem;">Reserved for Downloader</span>' : ''}
+              <span class="type-pill ${badgeClass}">${c.type}</span>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function handleChannelRowClick(e, cid, isReserved) {
+      if (e.target.tagName !== 'INPUT') {
+        toggleChannel(cid, isReserved);
+      }
+    }
+
+    function toggleChannel(cid, isReserved) {
+      if (isReserved) return;
+      if (selectedStreamingCids.has(cid)) {
+        selectedStreamingCids.delete(cid);
+      } else {
+        selectedStreamingCids.add(cid);
+      }
+      renderChannels();
+    }
+
+    async function saveStreamingChannels() {
+      const btn = document.getElementById('btnSaveStremio');
+      if (btn) {
+        btn.innerHTML = '<span class="spinner"></span> Saving...';
+        btn.classList.add('loading');
+      }
+      const cids = Array.from(selectedStreamingCids);
+      try {
+        const res = await fetch('/api/stremio/channels', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ channel_ids: cids })
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          showAlert(`Saved ${cids.length} channel(s) for Stremio streaming!`, 'success');
+        } else {
+          showAlert(data.detail || data.message || 'Error saving channels', 'error');
+        }
+      } catch (err) {
+        showAlert('Network error saving streaming channels: ' + err.message, 'error');
+      } finally {
+        if (btn) {
+          btn.innerHTML = '💾 Save Streaming Channels';
+          btn.classList.remove('loading');
+        }
+      }
+    }
+
+    async function loadStats() {
+      try {
+        const res = await fetch('/api/stremio/stats');
+        if (!res.ok) return;
+        const data = await res.json();
+        const s = data.stats || {};
+        document.getElementById('statMovies').innerText = s.movies || 0;
+        document.getElementById('statSeries').innerText = s.series_episodes || 0;
+        document.getElementById('statTotal').innerText = s.total_videos || 0;
+
+        const scanBadge = document.getElementById('scanStatusBadge');
+        if (data.is_scanning) {
+          scanBadge.innerText = '⚡ History scan in progress...';
+          scanBadge.style.color = 'var(--warning)';
+        } else {
+          scanBadge.innerText = 'Idle';
+          scanBadge.style.color = 'var(--text-muted)';
+        }
+      } catch (err) {}
+    }
+
+    async function triggerScan() {
+      const btn = document.getElementById('btnScanHistory');
+      if (btn) {
+        btn.innerHTML = '<span class="spinner"></span> Scanning...';
+        btn.classList.add('loading');
+      }
+      try {
+        const res = await fetch('/api/stremio/scan', { method: 'POST' });
+        const data = await res.json();
+        if (data.status === 'started') {
+          showAlert('History scan started in background. New videos will appear in your catalog.', 'success');
+        } else {
+          showAlert(data.message || 'Notice: ' + data.status, 'success');
+        }
+        loadStats();
+      } catch (err) {
+        showAlert('Error initiating channel scan: ' + err.message, 'error');
+      } finally {
+        if (btn) {
+          btn.innerHTML = '🔄 Scan Channel History Now';
+          btn.classList.remove('loading');
+        }
+      }
+    }
+
+    // --- Toast Notification Utility ---
+    function showToast(message, type = 'info', duration = 4000) {
+      const container = document.getElementById('toastContainer');
+      const toast = document.createElement('div');
+      toast.className = `toast toast-${type}`;
+      
+      let icon = 'ℹ️';
+      if (type === 'success') icon = '✓';
+      if (type === 'error') icon = '✕';
+      
+      toast.innerHTML = `
+        <div class="toast-content">
+          <span class="toast-icon">${icon}</span>
+          <span>${message}</span>
+        </div>
+        <button class="toast-close" onclick="this.parentElement.remove()">×</button>
+      `;
+      
+      container.appendChild(toast);
+      setTimeout(() => toast.classList.add('show'), 10);
+      
+      const timer = setTimeout(() => {
+        toast.classList.remove('show');
+        setTimeout(() => toast.remove(), 250);
+      }, duration);
+
+      toast.addEventListener('click', () => {
+        clearTimeout(timer);
+        toast.classList.remove('show');
+        setTimeout(() => toast.remove(), 250);
+      });
+    }
+
+    async function clearCatalog() {
+      if (!confirm('Clear all indexed movies and series from the Stremio catalog? (This will not delete any downloaded media files)')) return;
+      try {
+        const res = await fetch('/api/stremio/clear', { method: 'POST' });
+        const data = await res.json();
+        if (data.success) {
+          showAlert('Stremio catalog index cleared.', 'success');
+          loadStats();
+        }
+      } catch (err) {
+        showAlert('Error clearing catalog: ' + err.message, 'error');
+      }
+    }
+
+    function copyManifestUrl() {
+      if (!manifestUrl) return;
+      navigator.clipboard.writeText(manifestUrl);
+      showAlert('Manifest URL copied to clipboard!', 'success');
+    }
+
+    function showAlert(msg, type) {
+      showToast(msg, type);
+      const box = document.getElementById('statusAlert');
+      box.className = `alert alert-${type}`;
+      box.innerText = msg;
+      box.style.display = 'block';
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    function escapeHtml(str) {
+      if (!str) return '';
+      return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    document.addEventListener('DOMContentLoaded', init);
+  </script>
+</body>
+</html>

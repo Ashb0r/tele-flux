@@ -1,31 +1,65 @@
 # =====================================================================
-# Git Ignore for Telegram Stremio Addon
-# Protects your sensitive Telegram API credentials, session keys, and database
+# Git Ignore for Telegram Media Suite & Stremio Add-on
+# Protects sensitive API credentials, local media archives, and database
 # =====================================================================
-# Environment variables & secrets
+
+# --- Media Storage & Temporary Downloads ---
+media/
+media/**
+data/media/
+data/media/**
+.downloads/
+**/.downloads/
+*.part
+test_media/
+test_media/**
+tests/test_media/
+tests/test_media/**
+
+# --- Environment Variables & Secrets ---
 .env
 .env.local
 .env.*.local
-# Persistent runtime data directory
-# (Contains library.db, settings.json, and Telegram MTProto session keys)
+*.env
+
+# --- Persistent Runtime Data & Database ---
+# (Contains library.db, downloader.db, settings.json, and Telegram MTProto session keys)
 data/
+data/**
 *.session
 *.session-journal
-# Python bytecode & cache
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# --- Python Bytecode & Cache ---
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
+*.pyd
 .pytest_cache/
-# Virtual environments
+.coverage
+htmlcov/
+
+# --- Virtual Environments ---
 venv/
 .venv/
 env/
 ENV/
-# System and IDE files
+
+# --- Logs & Runtime Output ---
+*.log
+logs/
+
+# --- System and IDE Files ---
 .vscode/
 .idea/
 *.swp
 *.swo
 .DS_Store
 Thumbs.db
+Desktop.ini
