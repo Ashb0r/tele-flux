@@ -144,6 +144,33 @@ LANGUAGE_CODE_MAP = {
     "chinese": "zh", "chi": "zh",
 }
 
+# Famous Malayalam dubbed releases that were given completely different titles in Kerala
+# (Mapped to their canonical TMDB titles, particularly Allu Arjun & Telugu blockbusters)
+MALAYALAM_RENAMED_DUBS = {
+    # Allu Arjun
+    ("krishna", 2008): "Parugu",
+    ("hero", 2007): "Desamuduru",
+    ("varan", 2010): "Varudu",
+    ("killadi", 2010): "Vedam",
+    ("romeoo", 2013): "Iddarammayilatho",
+    ("romeoo & juliets", 2013): "Iddarammayilatho",
+    ("romeo & juliets", 2013): "Iddarammayilatho",
+    ("gajapokkiri", 2012): "Julayi",
+    ("lucky the racer", 2014): "Race Gurram",
+    ("yodhavu", 2016): "Sarrainodu",
+    ("dhruvaraja jagannadh", 2017): "DJ: Duvvada Jagannadham",
+    ("dhruvaraja jagannadham", 2017): "DJ: Duvvada Jagannadham",
+    ("angu vaikuntapurathu", 2020): "Ala Vaikunthapurramuloo",
+    ("angu vaikunthapurathu", 2020): "Ala Vaikunthapurramuloo",
+    # Ram Charan
+    ("bhaiyya", 2014): "Yevadu",
+    ("ekalavya", 2014): "Govindudu Andarivadele",
+    # Mahesh Babu
+    ("bharat enna njan", 2018): "Bharat Ane Nenu",
+    # Prabhas / Others
+    ("chatrapati", 2005): "Chatrapathi",
+}
+
 def normalize_title(s: str) -> str:
     if not s:
         return ""
@@ -205,12 +232,12 @@ def choose_best_tmdb_hit(results: list[dict], query: str, year: int | None, file
 
     # If release year was provided, strictly prioritize candidates with matching release year
     if year:
-        # Tier 1: Exact or ±1 year release match
+        # Tier 1: Exact release year match (item_yr == year)
         exact_year_matches = []
         for item in pool:
             d = (item.get("first_air_date" if media_type == "series" else "release_date") or "").strip()
             item_yr = int(d[:4]) if len(d) >= 4 and d[:4].isdigit() else None
-            if item_yr and abs(item_yr - year) <= 1:
+            if item_yr and item_yr == year:
                 exact_year_matches.append(item)
 
         if exact_year_matches:
@@ -218,32 +245,45 @@ def choose_best_tmdb_hit(results: list[dict], query: str, year: int | None, file
             if len(pool) == 1:
                 return pool[0]
         else:
-            # Tier 2: Within ±2 years margin (e.g. film festival premiere vs general release)
-            margin2_matches = []
+            # Tier 2: Within ±1 year margin (e.g. film festival premiere vs general release)
+            close_year_matches = []
             for item in pool:
                 d = (item.get("first_air_date" if media_type == "series" else "release_date") or "").strip()
                 item_yr = int(d[:4]) if len(d) >= 4 and d[:4].isdigit() else None
-                if item_yr and abs(item_yr - year) <= 2:
-                    margin2_matches.append(item)
+                if item_yr and abs(item_yr - year) <= 1:
+                    close_year_matches.append(item)
 
-            if margin2_matches:
-                pool = margin2_matches
+            if close_year_matches:
+                pool = close_year_matches
                 if len(pool) == 1:
                     return pool[0]
             else:
-                # Tier 3: Only if NO candidate has a release date within ±2 years,
-                # fallback to candidates with unannounced / missing release dates
-                no_date_matches = [
-                    item for item in pool
-                    if not (item.get("first_air_date" if media_type == "series" else "release_date") or "").strip()[:4].isdigit()
-                ]
-                if no_date_matches:
-                    pool = no_date_matches
+                # Tier 3: Within ±2 years margin
+                margin2_matches = []
+                for item in pool:
+                    d = (item.get("first_air_date" if media_type == "series" else "release_date") or "").strip()
+                    item_yr = int(d[:4]) if len(d) >= 4 and d[:4].isdigit() else None
+                    if item_yr and abs(item_yr - year) <= 2:
+                        margin2_matches.append(item)
+
+                if margin2_matches:
+                    pool = margin2_matches
                     if len(pool) == 1:
                         return pool[0]
                 else:
-                    # Release year mismatch by > 2 years (e.g. 1986 vs 2008). Reject!
-                    return None
+                    # Tier 4: Only if NO candidate has a release date within ±2 years,
+                    # fallback to candidates with unannounced / missing release dates
+                    no_date_matches = [
+                        item for item in pool
+                        if not (item.get("first_air_date" if media_type == "series" else "release_date") or "").strip()[:4].isdigit()
+                    ]
+                    if no_date_matches:
+                        pool = no_date_matches
+                        if len(pool) == 1:
+                            return pool[0]
+                    else:
+                        # Release year mismatch by > 2 years (e.g. 1986 vs 2008). Reject!
+                        return None
     elif len(pool) == 1:
         return pool[0]
 
@@ -694,10 +734,11 @@ def parse_filename(file_name: str, caption: str = "") -> dict:
             candidates.remove(untruncated)
             candidates.insert(0, untruncated)
 
-    # Detect language if mentioned in filename or caption
+    # Detect language and dubbed indicators if mentioned in filename or caption
     full_text = " ".join(candidates) + " " + caption
     lang_m = re.search(rf"(?i)\b({LANGUAGE_TOKENS})\b", full_text)
     found_lang = lang_m.group(1).lower() if lang_m else None
+    is_dubbed = bool(re.search(r'(?i)\bdub(?:bed)?\b', full_text))
 
     # Stage 1: Check for Series patterns across candidates
     series_results = []
@@ -735,7 +776,8 @@ def parse_filename(file_name: str, caption: str = "") -> dict:
                     "season": season,
                     "episode": episode,
                     "media_type": "series",
-                    "language": found_lang
+                    "language": found_lang,
+                    "is_dubbed": is_dubbed
                 })
                 break
 
@@ -798,7 +840,8 @@ def parse_filename(file_name: str, caption: str = "") -> dict:
         "season": None,
         "episode": None,
         "media_type": "movie",
-        "language": found_lang
+        "language": found_lang,
+        "is_dubbed": is_dubbed
     }
 
 STOP_WORDS = {
@@ -985,6 +1028,43 @@ async def execute_tmdb_search(client: httpx.AsyncClient, api_key: str, query: st
 
     # Step-by-step hierarchical candidate selection (Name -> Year -> Language -> Top TMDB Hit)
     hit = choose_best_tmdb_hit(results, query, year, language, media_type)
+
+    # Step-by-step fallback: Check official alternative / dubbed titles in TMDB
+    # Handles regional releases with altered titles (e.g. Malayalam 'Yodhavu' -> Telugu 'Sarrainodu')
+    if not hit and results:
+        q_norm = normalize_title(query)
+        q_no_art_norm = normalize_title(strip_article(query))
+        q_clean = query.strip().lower()
+
+        for cand in results[:4]:
+            cand_d = (cand.get("first_air_date" if media_type == "series" else "release_date") or "").strip()
+            cand_yr = int(cand_d[:4]) if len(cand_d) >= 4 and cand_d[:4].isdigit() else None
+            # If release year was provided in filename, candidate must match within ±1 year
+            if year and cand_yr and abs(cand_yr - year) > 1:
+                continue
+
+            cand_id = cand.get("id")
+            if not cand_id:
+                continue
+
+            alt_endpoint = "tv" if media_type == "series" else "movie"
+            alt_url = f"https://api.themoviedb.org/3/{alt_endpoint}/{cand_id}/alternative_titles"
+            alt_data = await tmdb_get_with_retry(client, alt_url, {"api_key": api_key})
+            if alt_data:
+                titles_list = alt_data.get("titles") or alt_data.get("results") or []
+                for alt_entry in titles_list:
+                    alt_title = (alt_entry.get("title") or alt_entry.get("name") or "").strip()
+                    if not alt_title:
+                        continue
+                    alt_norm = normalize_title(alt_title)
+                    alt_no_art_norm = normalize_title(strip_article(alt_title))
+                    if q_norm == alt_norm or q_no_art_norm == alt_no_art_norm or q_clean == alt_title.lower():
+                        print(f"[TMDB Dubbed/Alternative Title Matched] '{query}' ({year}) -> '{cand.get('title')}' (TMDB: {cand_id})")
+                        hit = cand
+                        break
+            if hit:
+                break
+
     if not hit:
         return None
 
@@ -1081,6 +1161,16 @@ async def lookup_tmdb(file_name: str, caption: str = "", parsed_override: dict |
         return fallback
 
     candidates = generate_search_candidates(raw_title)
+
+    # Dubbed / Renamed release mapping:
+    # If the file is tagged as a Malayalam release or Malayalam dubbed,
+    # check known renamed theatrical releases (e.g. 'Krishna (2008)' -> 'Parugu')
+    norm_title = raw_title.strip().lower()
+    norm_key = (norm_title, year)
+    if (language == "malayalam" or parsed.get("is_dubbed")) and norm_key in MALAYALAM_RENAMED_DUBS:
+        renamed = MALAYALAM_RENAMED_DUBS[norm_key]
+        if renamed not in candidates:
+            candidates.insert(0, renamed)
 
     try:
         async with httpx.AsyncClient(timeout=14.0) as client:
