@@ -466,7 +466,7 @@ async def probe_stream(chat_id: int, message_id: int, filename: str):
     }
     return Response(status_code=200, headers=headers)
 
-# HTTP 206 Partial Content Streamer for ExoPlayer / MPV / VLC
+# HTTP 206 Partial Content Streamer for ExoPlayer / MPV / VLC / Stremio
 @app.get("/play/{chat_id}/{message_id}/{filename}")
 async def play_stream(chat_id: int, message_id: int, filename: str, request: Request):
     video = await get_video_by_location(chat_id, message_id)
@@ -488,14 +488,45 @@ async def play_stream(chat_id: int, message_id: int, filename: str, request: Req
             headers=headers
         )
 
-    match = re.match(r"bytes=(\d+)-(\d+)?", range_header)
-    if not match:
-        raise HTTPException(status_code=416, detail="Invalid Range Header")
+    # Standard RFC 7233 HTTP Range parsing (supports standard, open-ended, and suffix ranges)
+    range_match = re.match(r"^bytes=(\d*)-(\d*)$", range_header.strip())
+    if not range_match:
+        raise HTTPException(
+            status_code=416,
+            detail="Invalid Range Header",
+            headers={"Content-Range": f"bytes */{file_size}"}
+        )
 
-    start = int(match.group(1))
-    end = int(match.group(2)) if match.group(2) else file_size - 1
+    start_str, end_str = range_match.groups()
+    if not start_str and not end_str:
+        raise HTTPException(
+            status_code=416,
+            detail="Invalid Range Header",
+            headers={"Content-Range": f"bytes */{file_size}"}
+        )
 
-    if start >= file_size:
+    if not start_str:
+        # Suffix byte range: e.g. bytes=-1048576 (last 1MB of file for trailer atom probes)
+        suffix_length = int(end_str)
+        if suffix_length <= 0:
+            raise HTTPException(
+                status_code=416,
+                detail="Invalid suffix range length",
+                headers={"Content-Range": f"bytes */{file_size}"}
+            )
+        start = max(0, file_size - suffix_length)
+        end = file_size - 1
+    elif not end_str:
+        # Open-ended range: e.g. bytes=1048576- (to end of file)
+        start = int(start_str)
+        end = file_size - 1
+    else:
+        # Explicit range: e.g. bytes=0-1048575
+        start = int(start_str)
+        end = int(end_str)
+
+    # Validate range boundaries
+    if start >= file_size or start > end or start < 0:
         raise HTTPException(
             status_code=416,
             detail="Requested range outside bounds",
@@ -521,7 +552,14 @@ async def play_stream(chat_id: int, message_id: int, filename: str, request: Req
 @app.get("/stats")
 async def show_stats():
     stats = await get_library_stats()
+    from streaming_engine import get_streaming_stats
+    stats["streaming"] = get_streaming_stats()
     return stats
+
+@app.get("/api/streaming/stats")
+async def get_streaming_stats_api():
+    from streaming_engine import get_streaming_stats
+    return get_streaming_stats()
 
 @app.post("/rescan")
 async def trigger_rescan():

@@ -35,66 +35,23 @@ active_channels: list[int] = []
 scan_task: asyncio.Task | None = None
 
 # ---------------------------------------------------------------------
-# Performance Optimization 1: In-Memory Document Descriptor Cache
-# Eliminates 300-500ms network round-trip per range request on player start!
+# Performance Optimization: High-Performance Shared Streaming Engine Integration
 # ---------------------------------------------------------------------
-_doc_cache = {} # (chat_id, message_id) -> (doc, timestamp)
+from streaming_engine import (
+    streaming_engine,
+    doc_manager,
+    block_cache,
+    LRUBlockCache,
+    get_streaming_stats,
+    is_streaming_active,
+)
+BlockCache = LRUBlockCache
+BLOCK_SIZE = CHUNK_SIZE_BYTES
+_doc_cache = doc_manager._doc_cache
 
 async def get_cached_document(chat_id: int, message_id: int):
-    now = time.time()
-    key = (chat_id, message_id)
-    if key in _doc_cache:
-        doc, expires_at = _doc_cache[key]
-        if now < expires_at:
-            return doc
-
-    # Fetch once and cache for 1 hour
-    message = await telethon_client.get_messages(chat_id, ids=message_id)
-    if not message or not message.media:
-        return None
-
-    doc = getattr(message.media, "document", None)
-    if not doc and hasattr(message, "video") and message.video:
-        doc = message.video
-
-    if doc:
-        _doc_cache[key] = (doc, now + 3600)
-    return doc
-
-# ---------------------------------------------------------------------
-# Performance Optimization 2: 128 MB Block-Aligned LRU Cache
-# Caches file blocks (512 KB) so header probes, trailer atom seeks,
-# and stream restarts begin INSTANTANEOUSLY from RAM (0.01ms latency!)
-# ---------------------------------------------------------------------
-BLOCK_SIZE = CHUNK_SIZE_BYTES
-
-class BlockCache:
-    def __init__(self, max_mb=128):
-        self.max_bytes = max_mb * 1024 * 1024
-        self.current_bytes = 0
-        self.cache = OrderedDict() # (doc_id, block_index) -> bytes
-        self.lock = asyncio.Lock()
-
-    async def get(self, doc_id: int, block_idx: int) -> bytes | None:
-        async with self.lock:
-            key = (doc_id, block_idx)
-            if key in self.cache:
-                self.cache.move_to_end(key)
-                return self.cache[key]
-            return None
-
-    async def put(self, doc_id: int, block_idx: int, data: bytes):
-        async with self.lock:
-            key = (doc_id, block_idx)
-            if key in self.cache:
-                return
-            self.cache[key] = data
-            self.current_bytes += len(data)
-            while self.current_bytes > self.max_bytes and self.cache:
-                _, evicted = self.cache.popitem(last=False)
-                self.current_bytes -= len(evicted)
-
-block_cache = BlockCache(max_mb=128)
+    global telethon_client
+    return await doc_manager.get_document(telethon_client, chat_id, message_id)
 
 def get_client() -> TelegramClient | None:
     return telethon_client
@@ -662,107 +619,23 @@ async def stop_telegram_service():
 
 async def stream_telegram_file(chat_id: int, message_id: int, offset: int, length: int):
     """
-    Ultra-low latency MTProto streaming engine:
-    1. Instant Document Resolution: Caches doc descriptor to eliminate 500ms network round-trip.
-    2. Zero-Buffer Start from RAM: Serves cached header/atoms/initial blocks immediately from RAM (0.01ms).
-    3. Prefetch Pipeline: Background task pre-fetches 2-3 chunks ahead in an asyncio.Queue,
-       eliminating WAN RTT idle pauses and saturating local network playback.
-    4. 512 KB Block Size: Rapid first-packet arrival (<250ms) for instant player response.
+    High-Performance MTProto streaming engine:
+    1. Aligned Block-Based File Retrieval: Slices exact requested bytes on aligned block boundaries.
+    2. Shared 128 MB LRU Block Cache: Delivers cached blocks instantly from RAM (0.01 ms).
+    3. Parallel Block Fetcher: Concurrent MTProto block requests bounded by global & per-stream limits.
+    4. Shared In-Flight Request Deduplication: Prevents duplicate fetches for the same block.
+    5. Priority Scheduler & Seek-Aware Cancellation: Prioritizes immediate playback and purges old prefetch.
+    6. Telegram File Reference Refresh: Automatically recovers from expired file references.
     """
     global telethon_client
     if not telethon_client or not telethon_client.is_connected():
         return
 
-    # Instant cached document lookup (0 ms latency!)
-    doc = await get_cached_document(chat_id, message_id)
-    if not doc:
-        return
-
-    file_size = getattr(doc, "size", 0)
-    if file_size <= 0:
-        return
-
-    end_offset = min(offset + length, file_size)
-    actual_length = end_offset - offset
-    if actual_length <= 0:
-        return
-
-    cur_offset = offset
-    bytes_remaining = actual_length
-
-    # Phase 1: Fast Start from Block Cache (Instant RAM delivery for header/tail probes & restart)
-    while bytes_remaining > 0:
-        b_idx = cur_offset // BLOCK_SIZE
-        b_offset = cur_offset % BLOCK_SIZE
-        cached_data = await block_cache.get(doc.id, b_idx)
-        if not cached_data:
-            break
-
-        avail_in_block = len(cached_data) - b_offset
-        if avail_in_block <= 0:
-            break
-
-        take = min(bytes_remaining, avail_in_block)
-        yield cached_data[b_offset : b_offset + take]
-        cur_offset += take
-        bytes_remaining -= take
-
-    # If completely satisfied from cache (e.g. 0-64KB header probe or EOF atom), done!
-    if bytes_remaining <= 0:
-        return
-
-    # Phase 2: Prefetch Pipeline via Producer-Consumer Queue
-    queue = asyncio.Queue(maxsize=3)  # Keep 3 blocks (1.5 MB) ready in RAM ahead of playback
-    stop_event = asyncio.Event()
-
-    async def download_worker():
-        try:
-            async for chunk in telethon_client.iter_download(
-                doc,
-                offset=cur_offset,
-                limit=bytes_remaining,
-                request_size=BLOCK_SIZE
-            ):
-                if stop_event.is_set():
-                    break
-                await queue.put(chunk)
-            await queue.put(None)  # EOF indicator
-        except asyncio.CancelledError:
-            pass
-        except Exception as e:
-            if not stop_event.is_set():
-                await queue.put(e)
-
-    producer_task = asyncio.create_task(download_worker())
-    chunk_tracker_offset = cur_offset
-
-    try:
-        while bytes_remaining > 0:
-            item = await queue.get()
-            if item is None:
-                break
-            if isinstance(item, Exception):
-                print(f"[Streaming Warning] MTProto download notice: {item}")
-                break
-
-            chunk = item
-            chunk_len = len(chunk)
-
-            # Save aligned block into cache so player re-probes or restarts hit RAM instantly
-            if chunk_tracker_offset % BLOCK_SIZE == 0 and chunk_len == BLOCK_SIZE:
-                b_idx = chunk_tracker_offset // BLOCK_SIZE
-                await block_cache.put(doc.id, b_idx, chunk)
-
-            # Yield chunk to HTTP client
-            yield chunk
-            chunk_tracker_offset += chunk_len
-            bytes_remaining -= chunk_len
-
-    finally:
-        stop_event.set()
-        producer_task.cancel()
-        while not queue.empty():
-            try:
-                queue.get_nowait()
-            except Exception:
-                break
+    async for chunk in streaming_engine.stream_file(
+        client=telethon_client,
+        chat_id=chat_id,
+        message_id=message_id,
+        offset=offset,
+        length=length
+    ):
+        yield chunk

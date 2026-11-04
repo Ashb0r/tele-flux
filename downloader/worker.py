@@ -196,6 +196,16 @@ class DownloaderWorker:
         """
         while self._running:
             try:
+                # Streaming priority coordination: If active streaming playback is ongoing,
+                # briefly yield background downloading so real-time playback receives full bandwidth.
+                try:
+                    from streaming_engine import is_streaming_active
+                    if is_streaming_active():
+                        await asyncio.sleep(1.0)
+                        continue
+                except Exception:
+                    pass
+
                 settings = load_settings()
                 if not settings.get("downloader_enabled", True):
                     await asyncio.sleep(5)
@@ -486,6 +496,16 @@ class DownloaderWorker:
         """
         while self._running:
             try:
+                # Streaming priority coordination: If active streaming playback is ongoing,
+                # briefly yield background downloading so real-time playback receives full bandwidth.
+                try:
+                    from streaming_engine import is_streaming_active
+                    if is_streaming_active():
+                        await asyncio.sleep(1.0)
+                        continue
+                except Exception:
+                    pass
+
                 settings = load_settings()
                 interval_min = int(settings.get("reconciliation_interval_min", 30))
                 await asyncio.sleep(max(60, interval_min * 60))
