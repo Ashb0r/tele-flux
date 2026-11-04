@@ -14,6 +14,7 @@ from downloader.database import (
     get_unfinished_jobs,
     get_job_by_id,
     update_job_status,
+    update_download_progress,
     recalculate_queue_positions,
     get_pending_notifications,
     get_checkpoint,

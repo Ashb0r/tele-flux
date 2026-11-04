@@ -184,6 +184,9 @@ class TelegramMediaDownloaderTestSuite(unittest.IsolatedAsyncioTestCase):
 
     # 8, 9 & 10. Server / Docker shutdown during download & startup recovery
     async def test_08_09_10_crash_recovery(self):
+        movies_dir = os.path.join(TEST_MEDIA_DIR, "Movies")
+        if os.path.exists(movies_dir):
+            shutil.rmtree(movies_dir, ignore_errors=True)
         job, _ = await enqueue_message(-100111, 501, "CrashTest.mkv", 1024 * 1024, "video/mp4", 1000)
         part_path = os.path.join(TEST_MEDIA_DIR, ".downloads", f"{job.id}_CrashTest.mkv.part")
         os.makedirs(os.path.dirname(part_path), exist_ok=True)

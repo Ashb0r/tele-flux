@@ -473,6 +473,15 @@ async def play_stream(chat_id: int, message_id: int, filename: str, request: Req
     if not video:
         raise HTTPException(status_code=404, detail="Video not found in library")
 
+    from streaming_engine import streaming_engine
+    from config import STREAM_MAX_ACTIVE_STREAMS
+    if streaming_engine.active_stream_count() >= STREAM_MAX_ACTIVE_STREAMS:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Server busy: maximum active playback sessions reached ({STREAM_MAX_ACTIVE_STREAMS})",
+            headers={"Retry-After": "5"}
+        )
+
     file_size = video["file_size"]
     range_header = request.headers.get("range")
 
