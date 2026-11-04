@@ -125,6 +125,19 @@ class DownloaderWorker:
 
         for job in unfinished_jobs:
             try:
+                # Check 0: Check if file already exists anywhere in media directory (Movies, TV Shows, Unsorted)
+                from downloader.archive_check import find_existing_media_file, check_db_for_existing_archive
+                existing_media = find_existing_media_file(
+                    media_dir, job.file_name, job.file_size, job.identified_title, job.identified_year
+                )
+                if not existing_media:
+                    existing_media = await check_db_for_existing_archive(job.file_name, job.file_size)
+                if existing_media:
+                    print(f"[Downloader Recovery] Job #{job.id} '{job.file_name}' already exists in library at '{existing_media}'. Marking COMPLETED.")
+                    await commit_job_completion(job.id, existing_media)
+                    await update_download_progress(job.id, job.file_size, 0.0)
+                    continue
+
                 # Check A: Was final file already committed to final destination?
                 if job.final_file_path and os.path.exists(job.final_file_path):
                     fsize = os.path.getsize(job.final_file_path)
@@ -230,6 +243,19 @@ class DownloaderWorker:
         print(f"[Downloader Worker] >>> Starting sequential download #{job_id}: '{job.file_name}' ({job.file_size} bytes)")
 
         try:
+            # 0. Deduplication check: Was this file already downloaded or committed to library?
+            from downloader.archive_check import find_existing_media_file, check_db_for_existing_archive
+            existing_media = find_existing_media_file(
+                media_dir, job.file_name, job.file_size, job.identified_title, job.identified_year
+            )
+            if not existing_media:
+                existing_media = await check_db_for_existing_archive(job.file_name, job.file_size)
+            if existing_media:
+                print(f"[Downloader Worker] '{job.file_name}' already exists in library at '{existing_media}'. Skipping download and marking COMPLETED!")
+                await commit_job_completion(job_id, existing_media)
+                await update_download_progress(job_id, job.file_size, 0.0)
+                return
+
             # 1. Download & verify
             async def on_progress(dl_bytes, speed, pct, eta):
                 if self._active_job and self._active_job.id == job_id:

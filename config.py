@@ -34,10 +34,15 @@ if not MEDIA_DIR:
     MEDIA_DIR = os.path.join(DATA_DIR, "media")
 os.makedirs(MEDIA_DIR, exist_ok=True)
 
-# Downloader chunk size: 1024 KB (1 MB) is MTProto's maximum supported part size.
-# 1024 KB cuts network request round-trips by 50% compared to 512 KB, doubling download speed!
+# Downloader chunk size: 512 KB is optimal for multi-connection MTProto downloads
 try:
-    DOWNLOAD_CHUNK_SIZE_KB = int(os.getenv("DOWNLOAD_CHUNK_SIZE_KB", "1024"))
+    DOWNLOAD_CHUNK_SIZE_KB = int(os.getenv("DOWNLOAD_CHUNK_SIZE_KB", "512"))
     DOWNLOAD_CHUNK_SIZE_BYTES = DOWNLOAD_CHUNK_SIZE_KB * 1024
 except ValueError:
-    DOWNLOAD_CHUNK_SIZE_BYTES = 1024 * 1024
+    DOWNLOAD_CHUNK_SIZE_BYTES = 512 * 1024
+
+# Parallel MTProto connections for maximum download speed (FastTelethon multi-connection acceleration)
+try:
+    DOWNLOAD_PARALLEL_CONNECTIONS = int(os.getenv("DOWNLOAD_PARALLEL_CONNECTIONS", "6"))
+except ValueError:
+    DOWNLOAD_PARALLEL_CONNECTIONS = 6

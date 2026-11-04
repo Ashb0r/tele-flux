@@ -15,8 +15,11 @@ from telethon.errors import (
     ChatAdminRequiredError
 )
 from telethon.tl.types import MessageMediaDocument, DocumentAttributeFilename
-from config import DOWNLOAD_CHUNK_SIZE_BYTES
+from telethon import utils
+from config import DOWNLOAD_CHUNK_SIZE_BYTES, DOWNLOAD_PARALLEL_CONNECTIONS
 from downloader.models import DownloadStatus, DownloadJob
+from downloader.fast_download import ParallelTransferrer
+from downloader.archive_check import find_existing_media_file
 from downloader.database import (
     update_job_status,
     update_download_progress,
@@ -114,6 +117,45 @@ class TelethonDownloadEngine:
             print(f"[Downloader Engine] Document refresh warning for #{message_id}: {e}")
             return None
 
+    async def _iter_chunks(self, doc, offset: int, expected_size: int):
+        """
+        Yields chunks using ParallelTransferrer (multi-socket MTProto transfer)
+        for maximum download speed saturating the network pipe.
+        Falls back seamlessly to Telethon's sequential iter_download if parallel
+        transfer encounters an issue.
+        """
+        dc_id = getattr(doc, 'dc_id', None) or getattr(self.client.session, 'dc_id', None)
+        current_offset = offset
+        if DOWNLOAD_PARALLEL_CONNECTIONS > 1 and dc_id:
+            try:
+                print(f"[Downloader Engine] Using maximum-speed parallel MTProto transfer ({DOWNLOAD_PARALLEL_CONNECTIONS} connections, 512KB chunks) for DC {dc_id} from offset {offset}...")
+                transferrer = ParallelTransferrer(self.client, dc_id=dc_id)
+                async for chunk in transferrer.download(
+                    file=doc,
+                    file_size=expected_size,
+                    start_offset=current_offset,
+                    part_size=self.chunk_size,
+                    connections=DOWNLOAD_PARALLEL_CONNECTIONS
+                ):
+                    current_offset += len(chunk)
+                    yield chunk
+                return
+            except (FileReferenceExpiredError, FloodWaitError):
+                raise
+            except Exception as e:
+                print(f"[Downloader Engine] Parallel transfer encountered ({e}). Gracefully continuing with sequential iter_download from offset {current_offset}...")
+
+        # Sequential fallback (from current offset)
+        bytes_remaining = expected_size - current_offset
+        if bytes_remaining > 0:
+            async for chunk in self.client.iter_download(
+                doc,
+                offset=current_offset,
+                limit=bytes_remaining,
+                request_size=self.chunk_size
+            ):
+                yield chunk
+
     async def download_job(
         self,
         job: DownloadJob,
@@ -140,6 +182,15 @@ class TelethonDownloadEngine:
         expected_size = job.file_size
         if expected_size <= 0:
             raise DownloadError(f"Job #{job.id} has invalid file size: {expected_size}")
+
+        # 0. Check if file is already completely archived on disk
+        existing = find_existing_media_file(media_dir, job.file_name, job.file_size)
+        if not existing:
+            from downloader.archive_check import check_db_for_existing_archive
+            existing = await check_db_for_existing_archive(job.file_name, job.file_size)
+        if existing:
+            print(f"[Downloader Engine] File '{job.file_name}' already exists in library at '{existing}'. Skipping download.")
+            return existing
 
         # 1. Inspect existing partial file and compute verified offset
         verified_offset = 0
@@ -221,14 +272,8 @@ class TelethonDownloadEngine:
                             pass
                         raise DownloadError(f"Download of job #{job.id} was paused or cancelled.")
 
-                    bytes_remaining = expected_size - verified_offset
                     try:
-                        async for chunk in self.client.iter_download(
-                            doc,
-                            offset=verified_offset,
-                            limit=bytes_remaining,
-                            request_size=self.chunk_size
-                        ):
+                        async for chunk in self._iter_chunks(doc, verified_offset, expected_size):
                             if cancel_event.is_set():
                                 part_file.flush()
                                 try:

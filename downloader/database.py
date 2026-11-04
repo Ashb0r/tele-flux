@@ -91,6 +91,16 @@ async def enqueue_message(
     If the message was already recorded, returns existing job with is_new=False.
     """
     now = int(time.time())
+    from config import MEDIA_DIR
+    from settings_manager import load_settings
+    from downloader.archive_check import find_existing_media_file, check_db_for_existing_archive
+
+    settings = load_settings()
+    media_dir = settings.get("media_dir") or MEDIA_DIR
+    existing_path = find_existing_media_file(media_dir, file_name, file_size)
+    if not existing_path:
+        existing_path = await check_db_for_existing_archive(file_name, file_size)
+
     async with aiosqlite.connect(DB_FILE) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
@@ -99,24 +109,42 @@ async def enqueue_message(
         ) as cur:
             existing = await cur.fetchone()
             if existing:
-                return _row_to_job(existing), False
+                job = _row_to_job(existing)
+                # If previously recorded as incomplete but now exists on disk, mark completed immediately
+                if job.status != DownloadStatus.COMPLETED.value and existing_path:
+                    await db.execute("""
+                        UPDATE download_queue
+                        SET status = ?, final_file_path = ?, bytes_downloaded = ?, completed_at = ?, updated_at = ?
+                        WHERE id = ?
+                    """, (DownloadStatus.COMPLETED.value, existing_path, file_size, now, now, job.id))
+                    await db.commit()
+                    async with db.execute("SELECT * FROM download_queue WHERE id = ?", (job.id,)) as c2:
+                        job = _row_to_job(await c2.fetchone())
+                return job, False
 
         # Calculate queue position
         async with db.execute("SELECT COALESCE(MAX(queue_position), 0) FROM download_queue") as cur:
             max_pos = (await cur.fetchone())[0]
         pos = max_pos + 1
 
+        initial_status = DownloadStatus.COMPLETED.value if existing_path else DownloadStatus.QUEUED.value
+        initial_bytes = file_size if existing_path else 0
+        completed_time = now if existing_path else None
+
         cursor = await db.execute("""
             INSERT INTO download_queue (
                 channel_id, message_id, grouped_id, file_id, file_name, file_size, mime_type,
                 message_date, file_reference, sender_id, sender_name,
                 status, queue_position, bytes_downloaded, download_speed,
+                final_file_path, completed_at,
                 created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0.0, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0.0, ?, ?, ?, ?)
         """, (
             channel_id, message_id, grouped_id, file_id, file_name, file_size, mime_type,
             message_date, file_reference, sender_id, sender_name,
-            DownloadStatus.QUEUED.value, pos, now, now
+            initial_status, pos, initial_bytes,
+            existing_path, completed_time,
+            now, now
         ))
         job_id = cursor.lastrowid
         await db.commit()

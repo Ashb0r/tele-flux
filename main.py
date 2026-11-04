@@ -610,6 +610,21 @@ async def save_downloader_config(payload: DownloaderConfigRequest):
     dl_channels = saved.get("download_channel_ids", [])
 
     if dl_enabled and dl_channels:
+        # Automatically unpause any PAUSED_DISK jobs so they get re-evaluated under updated settings
+        try:
+            import aiosqlite
+            from downloader.database import DB_FILE, recalculate_queue_positions_internal
+            async with aiosqlite.connect(DB_FILE) as db:
+                await db.execute("""
+                    UPDATE download_queue
+                    SET status = 'QUEUED', next_retry_at = NULL, last_error = NULL
+                    WHERE status = 'PAUSED_DISK'
+                """)
+                await db.commit()
+                await recalculate_queue_positions_internal(db)
+        except Exception as e:
+            print(f"[Config Save Warning] Error unpausing disk-paused jobs: {e}")
+
         worker = get_downloader_worker()
         if not worker or not worker.is_running:
             if not client or not client.is_connected():
@@ -740,13 +755,21 @@ async def pause_download_job_api(job_id: int):
 @app.post("/api/downloader/job/{job_id}/resume")
 async def resume_download_job_api(job_id: int):
     from downloader.database import resume_job
+    from downloader.service import get_downloader_worker
     await resume_job(job_id)
+    worker = get_downloader_worker()
+    if worker:
+        worker.wake()
     return {"success": True}
 
 @app.post("/api/downloader/job/{job_id}/retry")
 async def retry_download_job_api(job_id: int):
     from downloader.database import retry_job
+    from downloader.service import get_downloader_worker
     await retry_job(job_id)
+    worker = get_downloader_worker()
+    if worker:
+        worker.wake()
     return {"success": True}
 
 @app.post("/api/downloader/job/{job_id}/skip")
