@@ -532,17 +532,26 @@
 
   <div class="card">
     <div class="card-title">
-      <span>2. TheMovieDatabase (TMDB) Integration</span>
+      <span>2. Metadata Providers (TMDB & StashDB)</span>
     </div>
-    <div class="card-subtitle">Required to fetch official movie posters, cast, synopsis, and match IMDb IDs</div>
+    <div class="card-subtitle">Configure TMDB for movies & series, StashDB for adult scenes, or provide both.</div>
 
     <div class="form-group">
-      <label for="tmdbKey">TMDB API Key (v3 Read Key)</label>
+      <label for="tmdbKey">TMDB API Key (Movies & TV Series)</label>
       <div class="input-row">
         <input type="text" id="tmdbKey" placeholder="32-character API key from themoviedb.org">
-        <button type="button" id="btnVerifyTmdb" class="btn btn-secondary">🔍 Verify Key</button>
+        <button type="button" id="btnVerifyTmdb" class="btn btn-secondary">🔍 Verify TMDB</button>
       </div>
       <div id="tmdbStatus" class="validation-hint"></div>
+    </div>
+
+    <div class="form-group" style="margin-top: 1rem; border-top: 1px solid var(--card-border); padding-top: 1rem;">
+      <label for="stashKey">StashDB API Key (Adult & Scene Vault)</label>
+      <div class="input-row">
+        <input type="text" id="stashKey" placeholder="StashDB API Key from stashdb.org">
+        <button type="button" id="btnVerifyStash" class="btn btn-secondary">🔍 Verify StashDB</button>
+      </div>
+      <div id="stashStatus" class="validation-hint"></div>
     </div>
   </div>
 
@@ -690,10 +699,13 @@
   let selectedDownloadChatIds = new Set();
   let publicUrl = "";
   let isTmdbVerified = false;
+  let isStashVerified = false;
 
   const alertBox = document.getElementById("statusAlert");
   const tmdbStatusBox = document.getElementById("tmdbStatus");
   const btnVerifyTmdb = document.getElementById("btnVerifyTmdb");
+  const stashStatusBox = document.getElementById("stashStatus");
+  const btnVerifyStash = document.getElementById("btnVerifyStash");
 
   function showAlert(msg, isError = false) {
     alertBox.textContent = msg;
@@ -715,6 +727,10 @@
       if (data.tmdb_api_key) {
         document.getElementById("tmdbKey").value = data.tmdb_api_key;
         verifyTmdbKey(true);
+      }
+      if (data.stashdb_api_key) {
+        document.getElementById("stashKey").value = data.stashdb_api_key;
+        verifyStashKey(true);
       }
 
       if (data.channel_ids && data.channel_ids.length > 0) {
@@ -1082,12 +1098,72 @@
     tmdbStatusBox.style.display = "none";
   });
 
+  // Verify StashDB API Key
+  async function verifyStashKey(silent = false) {
+    const key = document.getElementById("stashKey").value.trim();
+    if (!key) {
+      if (!silent) showAlert("Please enter a StashDB API Key to verify.", true);
+      isStashVerified = false;
+      return false;
+    }
+
+    btnVerifyStash.disabled = true;
+    btnVerifyStash.textContent = "⏳ Verifying...";
+    stashStatusBox.style.display = "none";
+
+    try {
+      const res = await fetch("/api/verify-stashdb", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ api_key: key })
+      });
+      const data = await res.json();
+
+      if (data.valid) {
+        isStashVerified = true;
+        stashStatusBox.textContent = "✓ StashDB API Key verified successfully! Adult scene identification enabled.";
+        stashStatusBox.className = "validation-hint hint-success";
+        stashStatusBox.style.display = "block";
+        btnVerifyStash.textContent = "✓ Verified";
+        btnVerifyStash.className = "btn btn-success";
+        return true;
+      } else {
+        isStashVerified = false;
+        stashStatusBox.textContent = `✗ ${data.message || "Invalid StashDB API Key."}`;
+        stashStatusBox.className = "validation-hint hint-error";
+        stashStatusBox.style.display = "block";
+        btnVerifyStash.textContent = "🔍 Verify StashDB";
+        btnVerifyStash.className = "btn btn-secondary";
+        return false;
+      }
+    } catch (e) {
+      isStashVerified = false;
+      stashStatusBox.textContent = "✗ Connection failed while verifying StashDB key.";
+      stashStatusBox.className = "validation-hint hint-error";
+      stashStatusBox.style.display = "block";
+      btnVerifyStash.textContent = "🔍 Verify StashDB";
+      btnVerifyStash.className = "btn btn-secondary";
+      return false;
+    } finally {
+      btnVerifyStash.disabled = false;
+    }
+  }
+
+  // Reset verification when user alters StashDB input
+  document.getElementById("stashKey").addEventListener("input", () => {
+    isStashVerified = false;
+    btnVerifyStash.textContent = "🔍 Verify StashDB";
+    btnVerifyStash.className = "btn btn-secondary";
+    stashStatusBox.style.display = "none";
+  });
+
   // Save full configuration
   async function saveConfig() {
     const apiId = document.getElementById("apiId").value.trim();
     const apiHash = document.getElementById("apiHash").value.trim();
     const botToken = document.getElementById("botToken").value.trim();
     const tmdbKey = document.getElementById("tmdbKey").value.trim();
+    const stashKey = document.getElementById("stashKey").value.trim();
 
     if (!apiId || !apiHash || !botToken) {
       showAlert("Please enter API ID, API Hash, and Bot Token.", true);
@@ -1108,11 +1184,21 @@
       }
     }
 
+    // StashDB Key must be verified if provided
+    if (stashKey && !isStashVerified) {
+      const verified = await verifyStashKey(false);
+      if (!verified) {
+        showAlert("Please verify your StashDB API Key before proceeding.", true);
+        return;
+      }
+    }
+
     const payload = {
       api_id: parseInt(apiId),
       api_hash: apiHash,
       bot_token: botToken,
       tmdb_api_key: tmdbKey,
+      stashdb_api_key: stashKey,
       channel_ids: Array.from(selectedChatIds)
     };
 

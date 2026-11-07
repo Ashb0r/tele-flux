@@ -4,6 +4,9 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Stremio Add-on Configuration - Telegram Media Suite</title>
+  <script>
+    window.ADULT_ONLY = __ADULT_ONLY__;
+  </script>
   <style>
     :root {
       --bg: #090d16;
@@ -66,6 +69,7 @@
     .pill-group { background: rgba(16, 185, 129, 0.2); color: var(--badge-group); }
 
     .stats-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin-bottom: 1.25rem; }
+    @media (max-width: 640px) { .stats-grid { grid-template-columns: repeat(2, 1fr) !important; } }
     .stat-box { background: var(--input-bg); border: 1px solid var(--input-border); border-radius: 8px; padding: 1rem; text-align: center; }
     .stat-val { font-size: 1.6rem; font-weight: 800; color: #fff; margin-bottom: 0.2rem; }
     .stat-lbl { font-size: 0.78rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; }
@@ -103,19 +107,18 @@
   <nav class="top-nav">
     <div class="brand">
       <div class="brand-icon">📺</div>
-      <span>Telegram Media Suite</span>
+      <span id="brandText">Telegram Stremio Add-on</span>
     </div>
     <div class="nav-links">
-      <a href="/settings" class="nav-link">⚙️ Settings & APIs</a>
-      <a href="/downloads" class="nav-link">⬇️ Media Downloader</a>
       <a href="/stremio" class="nav-link active">📺 Stremio Add-on</a>
+      <a href="/settings" class="nav-link">⚙️ Settings & Credentials</a>
     </div>
   </nav>
 
   <div class="container">
     <div class="page-header">
-      <h1>Stremio Streaming Add-on</h1>
-      <p>Stream high-definition videos from your Telegram streaming channel directly into Stremio. Independent from the downloader module.</p>
+      <h1 id="pageTitle">Stremio Streaming Add-on</h1>
+      <p id="pageDesc">Stream high-definition videos from your Telegram streaming channel directly into Stremio with instant seek.</p>
     </div>
 
     <div id="statusAlert" class="alert"></div>
@@ -136,12 +139,17 @@
     <div class="card">
       <div class="card-title">
         <span>1. Select Stremio Streaming Channel</span>
-        <button type="button" class="btn btn-secondary" id="btnRefreshChats" style="padding:0.35rem 0.75rem; font-size:0.8rem;" onclick="loadChats(true)">
-          🔄 Refresh Channels
-        </button>
+        <div style="display:flex; gap:0.4rem; align-items:center;">
+          <button type="button" class="btn btn-secondary" id="btnToggleAll" style="padding:0.35rem 0.75rem; font-size:0.8rem;" onclick="toggleSelectAll()">
+            ☑️ Select All
+          </button>
+          <button type="button" class="btn btn-secondary" id="btnRefreshChats" style="padding:0.35rem 0.75rem; font-size:0.8rem;" onclick="loadChats(true)">
+            🔄 Refresh Channels
+          </button>
+        </div>
       </div>
       <div class="card-subtitle">
-        Select which Telegram channel(s) will be indexed and streamed in Stremio. Channels selected here cannot be used for local downloading.
+        Select which Telegram channel(s) will be indexed and streamed in Stremio.
       </div>
 
       <div id="channelContainer" class="channel-list">
@@ -154,10 +162,10 @@
       <div style="margin-top:0.85rem; padding:0.85rem; background:rgba(255,255,255,0.02); border:1px dashed var(--input-border); border-radius:8px;">
         <div style="font-size:0.82rem; font-weight:600; margin-bottom:0.4rem; color:#cbd5e1;">➕ Add Channel Manually (by ID or @username)</div>
         <div style="display:flex; gap:0.5rem;">
-          <input type="text" id="manualChatInput" class="form-input" style="flex:1;" placeholder="e.g. -1004474080975 or @channel_username">
+          <input type="text" id="manualChatInput" class="form-input" style="flex:1; background:var(--input-bg); border:1px solid var(--input-border); border-radius:8px; padding:0.6rem 0.8rem; color:#fff; font-size:0.9rem;" placeholder="e.g. -1004474080975 or @channel_username">
           <button type="button" class="btn btn-secondary" id="btnManualAdd" onclick="addManualChat()">Add Channel</button>
         </div>
-        <div class="form-hint" id="manualHint">Enter the channel ID (starts with -100) or public @username to add it immediately.</div>
+        <div class="form-hint" id="manualHint" style="font-size:0.75rem; color:var(--text-muted); margin-top:0.4rem;">Enter the channel ID (starts with -100) or public @username to add it immediately.</div>
       </div>
 
       <div style="margin-top:1.25rem; display:flex; justify-content:flex-end;">
@@ -168,31 +176,35 @@
     </div>
 
     <!-- Stremio Indexer & Catalog Card -->
-    <div class="card">
+    <div class="card" id="catalogCard">
       <div class="card-title">
         <span>2. Catalog Index & Sync</span>
         <span id="scanStatusBadge" style="font-size:0.8rem; color:var(--text-muted);">Idle</span>
       </div>
-      <div class="card-subtitle">
-        The add-on captures new videos automatically when posted. You can also scan your channel's existing history on demand.
+      <div class="card-subtitle" id="catalogSubtitle">
+        The add-on captures new videos automatically. You can also scan your channel's existing history on demand.
       </div>
 
-      <div class="stats-grid">
-        <div class="stat-box">
+      <div class="stats-grid" id="statsGrid">
+        <div class="stat-box" id="statMoviesBox">
           <div class="stat-val" id="statMovies">0</div>
           <div class="stat-lbl">Movies Indexed</div>
         </div>
-        <div class="stat-box">
+        <div class="stat-box" id="statSeriesBox">
           <div class="stat-val" id="statSeries">0</div>
           <div class="stat-lbl">Episodes Indexed</div>
         </div>
-        <div class="stat-box">
+        <div class="stat-box" id="statAdultBox" style="display:none;">
+          <div class="stat-val" id="statAdult">0</div>
+          <div class="stat-lbl">Adult / StashDB</div>
+        </div>
+        <div class="stat-box" id="statTotalBox">
           <div class="stat-val" id="statTotal">0</div>
           <div class="stat-lbl">Total Media Files</div>
         </div>
       </div>
 
-      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem;">
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem;" id="catalogActions">
         <button type="button" class="btn btn-danger" onclick="clearCatalog()">
           🧹 Clear Catalog Index
         </button>
@@ -205,10 +217,47 @@
   </div>
 
   <script>
+    const IS_ADULT_ONLY = (typeof window.ADULT_ONLY !== 'undefined') ? Boolean(window.ADULT_ONLY) : false;
     let discoveredChats = [];
     let selectedStreamingCids = new Set();
-    let downloadCids = new Set();
     let manifestUrl = "";
+
+    function applyAdultMode(isAdult) {
+      const pageTitle = document.getElementById('pageTitle');
+      const pageDesc = document.getElementById('pageDesc');
+      const catalogSubtitle = document.getElementById('catalogSubtitle');
+      const statMoviesBox = document.getElementById('statMoviesBox');
+      const statSeriesBox = document.getElementById('statSeriesBox');
+      const statAdultBox = document.getElementById('statAdultBox');
+      const statsGrid = document.getElementById('statsGrid');
+      const btnScanHistory = document.getElementById('btnScanHistory');
+      const scanStatusBadge = document.getElementById('scanStatusBadge');
+
+      if (isAdult) {
+        if (pageTitle) pageTitle.innerText = 'Stremio Adult Streaming Add-on';
+        if (pageDesc) pageDesc.innerText = 'Stream adult scenes from your Telegram channel directly into Stremio with instant seek.';
+        if (catalogSubtitle) catalogSubtitle.innerText = 'The add-on captures new scenes automatically. You can also scan your channel\'s existing history on demand.';
+        if (statMoviesBox) statMoviesBox.style.display = 'none';
+        if (statSeriesBox) statSeriesBox.style.display = 'none';
+        if (statAdultBox) statAdultBox.style.display = 'block';
+        if (statsGrid) statsGrid.style.gridTemplateColumns = 'repeat(2, 1fr)';
+        if (btnScanHistory) btnScanHistory.style.display = 'inline-flex';
+        if (scanStatusBadge) scanStatusBadge.style.display = 'inline-block';
+      } else {
+        if (pageTitle) pageTitle.innerText = 'Stremio Streaming Add-on';
+        if (pageDesc) pageDesc.innerText = 'Stream high-definition videos from your Telegram streaming channel directly into Stremio with instant seek.';
+        if (catalogSubtitle) catalogSubtitle.innerText = 'The add-on captures new videos automatically. You can also scan your channel\'s existing history on demand.';
+        if (statMoviesBox) statMoviesBox.style.display = 'block';
+        if (statSeriesBox) statSeriesBox.style.display = 'block';
+        if (statAdultBox) statAdultBox.style.display = 'none';
+        if (statsGrid) statsGrid.style.gridTemplateColumns = 'repeat(3, 1fr)';
+        if (btnScanHistory) btnScanHistory.style.display = 'inline-flex';
+        if (scanStatusBadge) scanStatusBadge.style.display = 'inline-block';
+      }
+    }
+
+    // Apply adult mode immediately
+    applyAdultMode(IS_ADULT_ONLY);
 
     async function init() {
       await loadConfig();
@@ -222,8 +271,11 @@
         const res = await fetch('/api/config');
         if (!res.ok) return;
         const cfg = await res.json();
+        
+        const isAdult = (typeof cfg.adult_only !== 'undefined') ? cfg.adult_only : IS_ADULT_ONLY;
+        applyAdultMode(isAdult);
+
         (cfg.channel_ids || []).forEach(cid => selectedStreamingCids.add(cid));
-        (cfg.download_channel_ids || []).forEach(cid => downloadCids.add(cid));
 
         manifestUrl = `${cfg.public_url}/manifest.json`;
         document.getElementById('manifestUrlText').innerText = manifestUrl;
@@ -238,10 +290,10 @@
       const container = document.getElementById('channelContainer');
       const btn = document.getElementById('btnRefreshChats');
 
-      if (btn && force) {
+      container.innerHTML = '<div style="padding:1.5rem; text-align:center; color:var(--text-muted);"><span class="spinner" style="border-top-color:var(--accent);"></span> Querying Telegram for channels...</div>';
+      if (btn) {
         btn.innerHTML = '<span class="spinner"></span> Refreshing...';
         btn.classList.add('loading');
-        container.innerHTML = '<div style="padding:1.5rem; text-align:center; color:var(--text-muted);"><span class="spinner" style="border-top-color:var(--accent);"></span> Querying Telegram for newly added channels...</div>';
       }
 
       try {
@@ -258,12 +310,20 @@
           body: JSON.stringify({ bot_token: cfg.bot_token })
         });
         const data = await res.json();
-        discoveredChats = data.chats || [];
+        const fetched = data.chats || [];
+
+        const chatMap = new Map();
+        discoveredChats.forEach(c => chatMap.set(c.id, c));
+        fetched.forEach(c => chatMap.set(c.id, c));
+        selectedStreamingCids.forEach(id => {
+          if (!chatMap.has(id)) {
+            chatMap.set(id, { id: id, title: `Channel ${id}`, type: 'Channel' });
+          }
+        });
+        discoveredChats = Array.from(chatMap.values());
 
         renderChannels();
-        if (force) {
-          showAlert(`Channel list updated: ${discoveredChats.length} channel(s) found!`, 'success');
-        }
+        showAlert(`Channel list updated: ${discoveredChats.length} channel(s) found!`, discoveredChats.length > 0 ? 'success' : 'error');
       } catch (err) {
         container.innerHTML = '<div style="padding:1.5rem; text-align:center; color:var(--error);">Failed to load channels: ' + err.message + '</div>';
       } finally {
@@ -329,38 +389,57 @@
       }
 
       container.innerHTML = discoveredChats.map(c => {
-        const isReservedByDownloader = downloadCids.has(c.id);
         const isSelected = selectedStreamingCids.has(c.id);
-        const disabledClass = isReservedByDownloader ? 'disabled' : '';
         const selectedClass = isSelected ? 'selected' : '';
         const badgeClass = c.type === 'Channel' ? 'pill-channel' : 'pill-group';
 
         return `
-          <div class="channel-item ${disabledClass} ${selectedClass}" onclick="handleChannelRowClick(event, ${c.id}, ${isReservedByDownloader})">
+          <div class="channel-item ${selectedClass}" onclick="handleChannelRowClick(event, ${c.id})">
             <div class="channel-info">
-              <input type="checkbox" class="channel-checkbox" ${isSelected ? 'checked' : ''} ${isReservedByDownloader ? 'disabled' : ''} onclick="event.stopPropagation()" onchange="toggleChannel(${c.id}, ${isReservedByDownloader})">
+              <input type="checkbox" class="channel-checkbox" ${isSelected ? 'checked' : ''} onclick="event.stopPropagation()" onchange="toggleChannel(${c.id})">
               <div>
                 <div class="channel-title">${escapeHtml(c.title)}</div>
                 <div class="channel-meta">${c.id} ${c.username ? '@' + c.username : ''}</div>
               </div>
             </div>
             <div>
-              ${isReservedByDownloader ? '<span style="font-size:0.75rem; color:var(--warning); margin-right:0.5rem;">Reserved for Downloader</span>' : ''}
               <span class="type-pill ${badgeClass}">${c.type}</span>
             </div>
           </div>
         `;
       }).join('');
+      updateSelectAllBtn();
     }
 
-    function handleChannelRowClick(e, cid, isReserved) {
+    function toggleSelectAll() {
+      if (!discoveredChats.length) return;
+      const allSelected = discoveredChats.every(c => selectedStreamingCids.has(c.id));
+      if (allSelected) {
+        selectedStreamingCids.clear();
+      } else {
+        discoveredChats.forEach(c => selectedStreamingCids.add(c.id));
+      }
+      renderChannels();
+    }
+
+    function updateSelectAllBtn() {
+      const btn = document.getElementById('btnToggleAll');
+      if (!btn) return;
+      if (!discoveredChats.length) {
+        btn.innerText = '☑️ Select All';
+        return;
+      }
+      const allSelected = discoveredChats.every(c => selectedStreamingCids.has(c.id));
+      btn.innerText = allSelected ? '⏹️ Deselect All' : '☑️ Select All';
+    }
+
+    function handleChannelRowClick(e, cid) {
       if (e.target.tagName !== 'INPUT') {
-        toggleChannel(cid, isReserved);
+        toggleChannel(cid);
       }
     }
 
-    function toggleChannel(cid, isReserved) {
-      if (isReserved) return;
+    function toggleChannel(cid) {
       if (selectedStreamingCids.has(cid)) {
         selectedStreamingCids.delete(cid);
       } else {
@@ -404,17 +483,20 @@
         if (!res.ok) return;
         const data = await res.json();
         const s = data.stats || {};
-        document.getElementById('statMovies').innerText = s.movies || 0;
-        document.getElementById('statSeries').innerText = s.series_episodes || 0;
-        document.getElementById('statTotal').innerText = s.total_videos || 0;
+        if (document.getElementById('statMovies')) document.getElementById('statMovies').innerText = s.movies || 0;
+        if (document.getElementById('statSeries')) document.getElementById('statSeries').innerText = s.series_episodes || 0;
+        if (document.getElementById('statAdult')) document.getElementById('statAdult').innerText = s.adult_videos || 0;
+        if (document.getElementById('statTotal')) document.getElementById('statTotal').innerText = s.total_videos || 0;
 
         const scanBadge = document.getElementById('scanStatusBadge');
-        if (data.is_scanning) {
-          scanBadge.innerText = '⚡ History scan in progress...';
-          scanBadge.style.color = 'var(--warning)';
-        } else {
-          scanBadge.innerText = 'Idle';
-          scanBadge.style.color = 'var(--text-muted)';
+        if (scanBadge) {
+          if (data.is_scanning) {
+            scanBadge.innerText = '⚡ History scan in progress...';
+            scanBadge.style.color = 'var(--warning)';
+          } else {
+            scanBadge.innerText = 'Idle';
+            scanBadge.style.color = 'var(--text-muted)';
+          }
         }
       } catch (err) {}
     }
@@ -429,7 +511,7 @@
         const res = await fetch('/api/stremio/scan', { method: 'POST' });
         const data = await res.json();
         if (data.status === 'started') {
-          showAlert('History scan started in background. New videos will appear in your catalog.', 'success');
+          showAlert(data.message || 'History scan started in background. New media will appear in your catalog.', 'success');
         } else {
           showAlert(data.message || 'Notice: ' + data.status, 'success');
         }
@@ -478,7 +560,7 @@
     }
 
     async function clearCatalog() {
-      if (!confirm('Clear all indexed movies and series from the Stremio catalog? (This will not delete any downloaded media files)')) return;
+      if (!confirm('Clear all indexed items from the Stremio catalog?')) return;
       try {
         const res = await fetch('/api/stremio/clear', { method: 'POST' });
         const data = await res.json();
@@ -500,10 +582,12 @@
     function showAlert(msg, type) {
       showToast(msg, type);
       const box = document.getElementById('statusAlert');
-      box.className = `alert alert-${type}`;
-      box.innerText = msg;
-      box.style.display = 'block';
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+      if (box) {
+        box.className = `alert alert-${type}`;
+        box.innerText = msg;
+        box.style.display = 'block';
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
     }
 
     function escapeHtml(str) {

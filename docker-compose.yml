@@ -6,28 +6,28 @@ services:
     container_name: stremio-telegram-addon
     restart: unless-stopped
     ports:
-      - "${SERVER_PORT:-7000}:7000"
+      - "${SERVER_PORT:-7000}:${SERVER_PORT:-7000}"
     volumes:
       # Persistent data (SQLite library, settings.json, Telegram session)
       - ./data:/app/data
-      # Persistent media storage (Movies, TV Shows, Unsorted, and .downloads)
-      - ./media:/media
       - ./main.py:/app/main.py
       - ./tmdb.py:/app/tmdb.py
+      - ./stashdb.py:/app/stashdb.py
       - ./database.py:/app/database.py
       - ./telegram_client.py:/app/telegram_client.py
       - ./settings_manager.py:/app/settings_manager.py
       - ./config.py:/app/config.py
+      - ./streaming_engine.py:/app/streaming_engine.py
       - ./templates:/app/templates
-      - ./downloader:/app/downloader
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     env_file:
       - .env
     environment:
       - PYTHONUNBUFFERED=1
       - DATA_DIR=/app/data
-      - MEDIA_DIR=/media
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:7000/stats || exit 1"]
+      test: ["CMD-SHELL", "curl -f http://localhost:${SERVER_PORT:-7000}/stats || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3

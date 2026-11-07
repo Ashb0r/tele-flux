@@ -85,3 +85,6 @@ Desktop.ini
 *.md
 LICENSE
 docker-compose*.yml
+
+telegram-media-downloader
+telegram-media-downloader/

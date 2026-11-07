@@ -13,8 +13,7 @@ A high-performance, self-hosted **Stremio Addon** with an interactive **Web Conf
   - Appears under the **official movie / TV show page** in Stremio alongside other addons (Torrentio, Cinemeta, etc.).
   - Adds dedicated **Telegram Movies** and **Telegram Series** catalog rows on your Stremio home screen.
 - 📡 **Real-time Live Sync**: Automatically captures, indexes, and surfaces newly posted or forwarded videos the moment they land in your Telegram channel.
-- 📥 **Fault-Tolerant Local Media Downloader & Archive (`/downloads`)**: Complete, independent, and sequential Telegram media downloader with MTProto chunked transfers, automatic resumption, power-failure recovery, SHA-256 checksums, and automatic TMDB movie/TV directory organization.
-- 🐳 **Docker-Ready**: Comes with Docker Compose, persisting your database and Telegram sessions safely in `./data` and downloaded media in `./media`.
+- 🐳 **Docker-Ready**: Comes with Docker Compose, persisting your database and Telegram sessions safely in `./data`.
 
 ---
 

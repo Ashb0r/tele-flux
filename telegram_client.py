@@ -12,9 +12,10 @@ from telethon.tl.types import (
     DocumentAttributeFilename,
 )
 from telethon.errors import FloodWaitError
-from config import DATA_DIR, CHUNK_SIZE_BYTES
+from config import DATA_DIR, CHUNK_SIZE_BYTES, ADULT_ONLY
 from database import upsert_video
 from tmdb import lookup_tmdb, parse_filename, extract_media_specs, format_stremio_stream
+from stashdb import search_stashdb_scene, format_stashdb_stream, clean_stash_filename
 from settings_manager import load_settings
 
 VIDEO_EXTENSIONS = (
@@ -56,6 +57,62 @@ async def get_cached_document(chat_id: int, message_id: int):
 def get_client() -> TelegramClient | None:
     return telethon_client
 
+KNOWN_CHANNELS_FILE = os.path.join(DATA_DIR, "known_channels.json")
+
+def load_known_channels() -> dict:
+    if os.path.exists(KNOWN_CHANNELS_FILE):
+        try:
+            with open(KNOWN_CHANNELS_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                return data if isinstance(data, dict) else {}
+        except Exception:
+            return {}
+    return {}
+
+def save_known_channels(channels: dict):
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        # Convert keys to strings for valid JSON
+        clean_map = {}
+        for k, v in channels.items():
+            if isinstance(v, dict) and "id" in v:
+                clean_map[str(v["id"])] = v
+        with open(KNOWN_CHANNELS_FILE, "w", encoding="utf-8") as f:
+            json.dump(clean_map, f, indent=2)
+    except Exception as e:
+        print(f"[Warning] Failed to save known channels: {e}")
+
+def get_session_channels() -> list[dict]:
+    session_file = SESSION_PATH + ".session" if not SESSION_PATH.endswith(".session") else SESSION_PATH
+    if not os.path.exists(session_file):
+        return []
+    try:
+        import sqlite3
+        con = sqlite3.connect(session_file)
+        cur = con.cursor()
+        rows = cur.execute("SELECT id, name, username FROM entities").fetchall()
+        con.close()
+        results = []
+        for r in rows:
+            raw_id, name, username = r[0], r[1], r[2]
+            if not raw_id:
+                continue
+            # Telethon stores channel and group peer IDs with negative sign (< 0)
+            if raw_id < 0:
+                results.append({
+                    "id": raw_id,
+                    "title": name or username or f"Channel {raw_id}",
+                    "type": "Channel",
+                    "username": username
+                })
+        return results
+    except Exception as e:
+        print(f"[Session Read Notice] {e}")
+        return []
+
+def get_session_channel_ids() -> list[int]:
+    return [c["id"] for c in get_session_channels()]
+
 async def lookup_single_chat(bot_token: str, chat_identifier: str) -> dict:
     token = bot_token.strip()
     target = chat_identifier.strip()
@@ -82,16 +139,64 @@ async def lookup_single_chat(bot_token: str, chat_identifier: str) -> dict:
             title = chat.get("title") or chat.get("first_name") or chat.get("username") or f"Chat {cid}"
 
             display_type = "Channel" if ctype == "channel" else ("Group" if ctype in ("group", "supergroup") else "Chat")
-            return {
+            chat_info = {
                 "id": cid,
                 "title": title,
                 "type": display_type,
                 "username": chat.get("username")
             }
+            # Cache permanently into known channels so it is never lost on refresh
+            known = load_known_channels()
+            known[str(cid)] = chat_info
+            save_known_channels(known)
+            return chat_info
     except Exception as e:
         return {"error": f"Network error resolving chat: {str(e)}"}
 
+async def sync_mtproto_channels(client: TelegramClient) -> dict:
+    """
+    Queries Telegram MTProto's updates difference to discover all channels
+    and supergroups the bot belongs to or is an administrator of.
+    Bypasses the 24-hour limit of the HTTP Bot API getUpdates method.
+    """
+    if not client or not client.is_connected():
+        return {}
+
+    discovered = {}
+    try:
+        from telethon.tl.functions.updates import GetStateRequest, GetDifferenceRequest
+        import telethon.utils as telethon_utils
+        import datetime
+
+        state = await client(GetStateRequest())
+        diff = await client(GetDifferenceRequest(
+            pts=1,
+            date=state.date - datetime.timedelta(days=90),
+            qts=0
+        ))
+        for c in getattr(diff, "chats", []):
+            peer_id = telethon_utils.get_peer_id(c)
+            title = getattr(c, "title", f"Channel {peer_id}")
+            ctype = "Channel" if getattr(c, "broadcast", True) else "Group"
+            discovered[str(peer_id)] = {
+                "id": peer_id,
+                "title": title,
+                "type": ctype,
+                "username": getattr(c, "username", None)
+            }
+
+        if discovered:
+            known = load_known_channels()
+            known.update(discovered)
+            save_known_channels(known)
+            print(f"[Telegram] MTProto synced {len(discovered)} channel(s): {', '.join([c['title'] for c in discovered.values()])}")
+    except Exception as e:
+        print(f"[Telegram Notice] Channel sync via MTProto: {e}")
+
+    return discovered
+
 async def discover_bot_chats(bot_token: str) -> dict:
+    global telethon_client
     token = bot_token.strip()
     if not token:
         return {"error": "Bot token cannot be empty"}
@@ -113,7 +218,7 @@ async def discover_bot_chats(bot_token: str) -> dict:
 
             await http.get(url_del_webhook, params={"drop_pending_updates": False})
 
-            # Query recent updates (both latest tail with offset=-100 and earliest head)
+            # Query recent updates — always add timeout=1 so Telegram never long-polls
             all_updates = []
             for offset_val in [-100, None]:
                 params = {
@@ -125,25 +230,66 @@ async def discover_bot_chats(bot_token: str) -> dict:
                         "my_chat_member",
                         "chat_member"
                     ]),
-                    "limit": 100
+                    "limit": 100,
+                    "timeout": 1,  # Prevent Telegram long-poll; return immediately
                 }
                 if offset_val is not None:
                     params["offset"] = offset_val
                 try:
-                    upd_resp = await http.get(url_updates, params=params)
+                    upd_resp = await http.get(url_updates, params=params, timeout=8.0)
                     if upd_resp.status_code == 200:
                         all_updates.extend(upd_resp.json().get("result", []))
                 except Exception:
                     pass
 
             chats_map = {}
+
+            # Source 1: Persistent known channels cache (from previous discoveries and live syncs)
+            known = load_known_channels()
+            for k, v in known.items():
+                if isinstance(v, dict) and "id" in v:
+                    chats_map[v["id"]] = v
+
+            # Source 2: Telegram MTProto Updates Difference
+            # Bypasses the 24-hour expiration of HTTP getUpdates and retrieves ALL channels the bot is in
+            if telethon_client and telethon_client.is_connected():
+                mt_chats = await sync_mtproto_channels(telethon_client)
+                for cid, cinfo in mt_chats.items():
+                    chats_map[cinfo["id"]] = cinfo
+            else:
+                from settings_manager import load_settings
+                s = load_settings()
+                if s.get("api_id") and s.get("api_hash") and (token or s.get("bot_token")):
+                    try:
+                        temp_client = TelegramClient(SESSION_PATH, s["api_id"], s["api_hash"])
+                        await temp_client.start(bot_token=(token or s.get("bot_token")))
+                        mt_chats = await sync_mtproto_channels(temp_client)
+                        for cid, cinfo in mt_chats.items():
+                            chats_map[cinfo["id"]] = cinfo
+                        telethon_client = temp_client
+                    except Exception as mt_err:
+                        print(f"[Telegram Notice] Auto-connect MTProto sync in discover_bot_chats: {mt_err}")
+
+            # Source 3: Channels cached in Telethon MTProto SQLite session (instant & offline)
+            session_chats = get_session_channels()
+            for sc in session_chats:
+                cid = sc["id"]
+                if cid not in chats_map:
+                    chats_map[cid] = sc
+
+            # Source 4: Live updates from getUpdates
             for item in all_updates:
                 candidate_chats = []
                 for key in ("channel_post", "edited_channel_post", "message", "edited_message", "my_chat_member", "chat_member"):
                     if key in item and isinstance(item[key], dict) and "chat" in item[key]:
                         candidate_chats.append(item[key]["chat"])
-                # Note: We intentionally DO NOT inspect forward_from_chat here so external
-                # channels that messages were forwarded from do not clutter discovered chats.
+
+                # If user forwarded a message from a channel into bot DM, recognize the forwarded channel
+                msg = item.get("message") or item.get("edited_message")
+                if msg and isinstance(msg, dict):
+                    fwd_chat = msg.get("forward_from_chat")
+                    if fwd_chat and isinstance(fwd_chat, dict) and fwd_chat.get("type") in ("channel", "supergroup"):
+                        candidate_chats.append(fwd_chat)
 
                 for chat in candidate_chats:
                     if chat and "id" in chat:
@@ -159,18 +305,51 @@ async def discover_bot_chats(bot_token: str) -> dict:
                             "username": chat.get("username")
                         }
 
-            # Also ensure any channels currently saved in settings are preserved
+                # If bot was removed/kicked from channel, update state
+                if "my_chat_member" in item:
+                    mcm = item["my_chat_member"]
+                    ncm = mcm.get("new_chat_member", {}) if isinstance(mcm, dict) else {}
+                    if ncm.get("status") in ("left", "kicked"):
+                        rm_cid = mcm.get("chat", {}).get("id")
+                        if rm_cid in chats_map:
+                            del chats_map[rm_cid]
+
+            # Source 4: Preserved channels from settings.json
             from settings_manager import load_settings
             cur_settings = load_settings()
             saved_cids = set(cur_settings.get("channel_ids", []) + cur_settings.get("download_channel_ids", []))
             for saved_cid in saved_cids:
                 if saved_cid not in chats_map:
+                    chats_map[saved_cid] = {
+                        "id": saved_cid,
+                        "title": f"Channel {saved_cid}",
+                        "type": "Channel",
+                        "username": None
+                    }
                     try:
                         resolved = await lookup_single_chat(token, str(saved_cid))
                         if "error" not in resolved and "id" in resolved:
                             chats_map[saved_cid] = resolved
                     except Exception:
                         pass
+
+            # Source 5: Live Telethon client dialogs (if active in user mode)
+            if telethon_client and telethon_client.is_connected():
+                try:
+                    if not getattr(telethon_client, "_is_bot", False):
+                        async for dialog in telethon_client.iter_dialogs(limit=50):
+                            if getattr(dialog, "is_channel", False) or getattr(dialog, "is_group", False):
+                                chats_map[dialog.id] = {
+                                    "id": dialog.id,
+                                    "title": dialog.name or f"Chat {dialog.id}",
+                                    "type": "Channel" if getattr(dialog, "is_channel", False) else "Group",
+                                    "username": getattr(dialog.entity, "username", None)
+                                }
+                except Exception:
+                    pass
+
+            # Persist the merged list into known_channels.json
+            save_known_channels(chats_map)
 
             return {
                 "bot": {
@@ -288,6 +467,59 @@ async def index_single_message(chat_id: int, message):
     parsed = meta["parsed"]
     specs = meta["specs"]
 
+    settings = load_settings()
+
+    # Route 1: Adult / StashDB identification (only active when ADULT_ONLY=True)
+    if ADULT_ONLY:
+        stash_key = (settings.get("stashdb_api_key") or "").strip()
+        stash_scene = None
+        if stash_key:
+            stash_scene = await search_stashdb_scene(meta["file_name"], meta["caption"], api_key=stash_key)
+
+        if not stash_scene:
+            c_title = clean_stash_filename(meta["file_name"])
+            stash_scene = {
+                "stash_id": f"stash_local_{message.id}",
+                "media_type": "porn",
+                "title": c_title,
+                "year": None,
+                "poster": None,
+                "backdrop": None,
+                "overview": f"Adult Scene: {c_title}",
+                "genres": ["Adult"],
+                "rating": 0.0
+            }
+
+        header = stash_scene["title"]
+        if stash_scene.get("year"):
+            header += f" ({stash_scene['year']})"
+
+        badge, desc = format_stashdb_stream(header, specs)
+
+        await upsert_video(
+            chat_id=chat_id,
+            message_id=message.id,
+            file_name=meta["file_name"],
+            file_size=meta["file_size"],
+            mime_type=meta["mime_type"],
+            stash_info=stash_scene,
+            specs=specs,
+            stream_badge=badge,
+            stream_desc=desc
+        )
+
+        res_badge = specs.get("resolution") or "HD"
+        codec_str = specs.get("codec") or ""
+        aud_str = specs.get("audio") or ""
+        tech_str = f"[{res_badge} {codec_str} {aud_str}]".replace("  ", " ")
+        sz_str = specs.get("size_str") or ""
+        studio_str = f" [{stash_scene.get('studio')}]" if stash_scene.get("studio") else ""
+
+        print(f"[Indexed Adult/StashDB] #{message.id}: {stash_scene['title']}{studio_str} {tech_str} {sz_str} [ID: {stash_scene.get('stash_id')}]")
+        return True
+
+    # Route 2: TMDB Movie / TV Series identification (when ADULT_ONLY=False)
+    tmdb_key = (settings.get("tmdb_api_key") or "").strip()
     # If TV Series, pre-populate series cache from database if another episode was already indexed
     if parsed.get("media_type") == "series":
         from tmdb import get_series_cache, set_series_cache
@@ -571,6 +803,48 @@ async def start_telegram_service():
     else:
         print(f"[Telegram] Connected to MTProto as User: {me.first_name} (@{me.username or 'No username'}) [FULL HISTORY ENABLED]")
 
+    # Discover and sync all channels the bot is an admin/member of
+    await sync_mtproto_channels(telethon_client)
+
+    import telethon.utils as telethon_utils
+
+    # Realtime channel discovery: when bot is added to a new channel or receives any post
+    @telethon_client.on(events.ChatAction)
+    async def on_bot_chat_action(event):
+        try:
+            chat = await event.get_chat()
+            if chat:
+                peer_id = telethon_utils.get_peer_id(chat)
+                known = load_known_channels()
+                known[str(peer_id)] = {
+                    "id": peer_id,
+                    "title": getattr(chat, "title", f"Channel {peer_id}"),
+                    "type": "Channel" if getattr(chat, "broadcast", True) else "Group",
+                    "username": getattr(chat, "username", None)
+                }
+                save_known_channels(known)
+        except Exception:
+            pass
+
+    @telethon_client.on(events.NewMessage)
+    async def on_any_channel_post(event):
+        try:
+            if event.is_channel:
+                chat = await event.get_chat()
+                if chat:
+                    peer_id = telethon_utils.get_peer_id(chat)
+                    known = load_known_channels()
+                    if str(peer_id) not in known:
+                        known[str(peer_id)] = {
+                            "id": peer_id,
+                            "title": getattr(chat, "title", f"Channel {peer_id}"),
+                            "type": "Channel" if getattr(chat, "broadcast", True) else "Group",
+                            "username": getattr(chat, "username", None)
+                        }
+                        save_known_channels(known)
+        except Exception:
+            pass
+
     # Real-time event listener for streaming channels (preserve existing Stremio functionality)
     if active_channels:
         @telethon_client.on(events.NewMessage(chats=active_channels))
@@ -587,30 +861,10 @@ async def start_telegram_service():
         # on-demand via the Stremio UI page ("Scan Channel" button).
         pass
 
-    # Start independent downloader module ONLY if explicitly enabled and download channels are chosen
-    dl_enabled = settings.get("downloader_enabled", False)
-    dl_channels = settings.get("download_channel_ids", [])
-    if dl_enabled and dl_channels:
-        try:
-            from downloader.service import start_downloader_service
-            await start_downloader_service(telethon_client)
-            print("[Downloader] Independent downloader module started successfully.")
-        except Exception as dl_err:
-            print(f"[Downloader Error] Failed to start downloader module: {dl_err}")
-    else:
-        print("[Downloader] Downloader is disabled or has no download channels configured. Standby mode.")
-
     return True
 
 async def stop_telegram_service():
     global telethon_client, scan_task
-    # Stop downloader module first
-    try:
-        from downloader.service import stop_downloader_service
-        await stop_downloader_service()
-    except Exception as dl_stop_err:
-        print(f"[Downloader Warning] Error stopping downloader: {dl_stop_err}")
-
     if scan_task and not scan_task.done():
         scan_task.cancel()
     if telethon_client and telethon_client.is_connected():

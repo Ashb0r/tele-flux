@@ -1,528 +1,1149 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Settings & Credentials - Telegram Media Suite</title>
-  <style>
-    :root {
-      --bg: #090d16;
-      --card-bg: #121826;
-      --card-border: #1e293b;
-      --card-border-hover: #334155;
-      --accent: #3b82f6;
-      --accent-hover: #2563eb;
-      --text: #f8fafc;
-      --text-muted: #94a3b8;
-      --input-bg: #1a2234;
-      --input-border: #334155;
-      --success: #10b981;
-      --success-glow: rgba(16, 185, 129, 0.2);
-      --warning: #f59e0b;
-      --error: #ef4444;
-      --error-glow: rgba(239, 68, 68, 0.2);
-    }
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Settings & Credentials - Telegram Media Suite</title>
+    <script>
+      window.ADULT_ONLY = __ADULT_ONLY__;
+    </script>
+    <style>
+      :root {
+        --bg: #090d16;
+        --card-bg: #121826;
+        --card-border: #1e293b;
+        --card-border-hover: #334155;
+        --accent: #3b82f6;
+        --accent-hover: #2563eb;
+        --text: #f8fafc;
+        --text-muted: #94a3b8;
+        --input-bg: #1a2234;
+        --input-border: #334155;
+        --success: #10b981;
+        --success-glow: rgba(16, 185, 129, 0.2);
+        --warning: #f59e0b;
+        --error: #ef4444;
+        --error-glow: rgba(239, 68, 68, 0.2);
+      }
 
-    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
-    body { background-color: var(--bg); color: var(--text); min-height: 100vh; display: flex; flex-direction: column; align-items: center; padding-bottom: 3rem; }
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+        font-family:
+          -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial,
+          sans-serif;
+      }
+      body {
+        background-color: var(--bg);
+        color: var(--text);
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding-bottom: 3rem;
+      }
 
-    /* Top Navigation Bar */
-    .top-nav { width: 100%; background: #0f172a; border-bottom: 1px solid #1e293b; padding: 0.75rem 1.5rem; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 100; box-shadow: 0 4px 12px rgba(0,0,0,0.4); }
-    .brand { display: flex; align-items: center; gap: 0.75rem; font-weight: 800; font-size: 1.15rem; letter-spacing: -0.02em; color: #fff; }
-    .brand-icon { background: linear-gradient(135deg, #3b82f6, #8b5cf6); border-radius: 8px; width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; font-size: 1.1rem; box-shadow: 0 0 12px rgba(59, 130, 246, 0.4); }
-    .nav-links { display: flex; gap: 0.5rem; }
-    .nav-link { padding: 0.5rem 1rem; border-radius: 8px; text-decoration: none; color: var(--text-muted); font-size: 0.9rem; font-weight: 600; transition: all 0.2s; display: flex; align-items: center; gap: 0.4rem; }
-    .nav-link:hover { color: #fff; background: rgba(255, 255, 255, 0.05); }
-    .nav-link.active { color: #fff; background: rgba(59, 130, 246, 0.2); border: 1px solid rgba(59, 130, 246, 0.4); }
+      /* Top Navigation Bar */
+      .top-nav {
+        width: 100%;
+        background: #0f172a;
+        border-bottom: 1px solid #1e293b;
+        padding: 0.75rem 1.5rem;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        position: sticky;
+        top: 0;
+        z-index: 100;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+      }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        font-weight: 800;
+        font-size: 1.15rem;
+        letter-spacing: -0.02em;
+        color: #fff;
+      }
+      .brand-icon {
+        background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+        border-radius: 8px;
+        width: 34px;
+        height: 34px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.1rem;
+        box-shadow: 0 0 12px rgba(59, 130, 246, 0.4);
+      }
+      .nav-links {
+        display: flex;
+        gap: 0.5rem;
+      }
+      .nav-link {
+        padding: 0.5rem 1rem;
+        border-radius: 8px;
+        text-decoration: none;
+        color: var(--text-muted);
+        font-size: 0.9rem;
+        font-weight: 600;
+        transition: all 0.2s;
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
+      }
+      .nav-link:hover {
+        color: #fff;
+        background: rgba(255, 255, 255, 0.05);
+      }
+      .nav-link.active {
+        color: #fff;
+        background: rgba(59, 130, 246, 0.2);
+        border: 1px solid rgba(59, 130, 246, 0.4);
+      }
 
-    .container { width: 100%; max-width: 780px; padding: 2rem 1.25rem; }
-    .page-header { text-align: center; margin-bottom: 2rem; }
-    .page-header h1 { font-size: 1.95rem; font-weight: 800; letter-spacing: -0.03em; margin-bottom: 0.45rem; }
-    .page-header p { color: var(--text-muted); font-size: 0.95rem; max-width: 620px; margin: 0 auto; line-height: 1.5; }
+      .container {
+        width: 100%;
+        max-width: 780px;
+        padding: 2rem 1.25rem;
+      }
+      .page-header {
+        text-align: center;
+        margin-bottom: 2rem;
+      }
+      .page-header h1 {
+        font-size: 1.95rem;
+        font-weight: 800;
+        letter-spacing: -0.03em;
+        margin-bottom: 0.45rem;
+      }
+      .page-header p {
+        color: var(--text-muted);
+        font-size: 0.95rem;
+        max-width: 620px;
+        margin: 0 auto;
+        line-height: 1.5;
+      }
 
-    /* Card styling */
-    .card { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 14px; padding: 1.75rem; margin-bottom: 1.5rem; box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.35); transition: border-color 0.2s; }
-    .card:hover { border-color: var(--card-border-hover); }
-    .card-title { font-size: 1.15rem; font-weight: 700; margin-bottom: 0.35rem; display: flex; align-items: center; justify-content: space-between; }
-    .card-subtitle { font-size: 0.85rem; color: var(--text-muted); margin-bottom: 1.35rem; line-height: 1.45; }
+      /* Card styling */
+      .card {
+        background: var(--card-bg);
+        border: 1px solid var(--card-border);
+        border-radius: 14px;
+        padding: 1.75rem;
+        margin-bottom: 1.5rem;
+        box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.35);
+        transition: border-color 0.2s;
+      }
+      .card:hover {
+        border-color: var(--card-border-hover);
+      }
+      .card-title {
+        font-size: 1.15rem;
+        font-weight: 700;
+        margin-bottom: 0.35rem;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+      .card-subtitle {
+        font-size: 0.85rem;
+        color: var(--text-muted);
+        margin-bottom: 1.35rem;
+        line-height: 1.45;
+      }
 
-    .form-group { margin-bottom: 1.25rem; position: relative; }
-    .form-label { display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 0.45rem; color: #cbd5e1; }
-    .form-label span.req { color: var(--error); margin-left: 0.2rem; }
+      .form-group {
+        margin-bottom: 1.25rem;
+        position: relative;
+      }
+      .form-label {
+        display: block;
+        font-size: 0.85rem;
+        font-weight: 600;
+        margin-bottom: 0.45rem;
+        color: #cbd5e1;
+      }
+      .form-label span.req {
+        color: var(--error);
+        margin-left: 0.2rem;
+      }
 
-    /* Inputs */
-    .form-input { width: 100%; background: var(--input-bg); border: 1px solid var(--input-border); border-radius: 8px; padding: 0.72rem 0.9rem; color: #fff; font-size: 0.95rem; transition: all 0.2s; outline: none; font-family: inherit; }
-    .form-input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.25); background: #1e293b; }
-    .form-input.masked { font-family: monospace; letter-spacing: 0.05em; }
+      /* Inputs */
+      .form-input {
+        width: 100%;
+        background: var(--input-bg);
+        border: 1px solid var(--input-border);
+        border-radius: 8px;
+        padding: 0.72rem 0.9rem;
+        color: #fff;
+        font-size: 0.95rem;
+        transition: all 0.2s;
+        outline: none;
+        font-family: inherit;
+      }
+      .form-input:focus {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.25);
+        background: #1e293b;
+      }
+      .form-input.masked {
+        font-family: monospace;
+        letter-spacing: 0.05em;
+      }
 
-    /* Input groups with inline action buttons */
-    .input-with-actions { display: flex; gap: 0.5rem; position: relative; }
-    .input-with-actions .form-input { flex: 1; }
+      /* Input groups with inline action buttons */
+      .input-with-actions {
+        display: flex;
+        gap: 0.5rem;
+        position: relative;
+      }
+      .input-with-actions .form-input {
+        flex: 1;
+      }
 
-    /* Toggle visibility button */
-    .btn-toggle-mask { background: var(--input-border); border: none; color: var(--text-muted); border-radius: 8px; padding: 0 0.85rem; cursor: pointer; transition: all 0.2s; font-size: 1rem; display: flex; align-items: center; justify-content: center; }
-    .btn-toggle-mask:hover { color: #fff; background: #475569; }
+      /* Toggle visibility button */
+      .btn-toggle-mask {
+        background: var(--input-border);
+        border: none;
+        color: var(--text-muted);
+        border-radius: 8px;
+        padding: 0 0.85rem;
+        cursor: pointer;
+        transition: all 0.2s;
+        font-size: 1rem;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .btn-toggle-mask:hover {
+        color: #fff;
+        background: #475569;
+      }
 
-    /* Action buttons */
-    .btn { padding: 0.7rem 1.35rem; border-radius: 8px; font-size: 0.9rem; font-weight: 600; cursor: pointer; border: none; transition: all 0.2s; display: inline-flex; align-items: center; gap: 0.45rem; justify-content: center; text-decoration: none; }
-    .btn-primary { background: var(--accent); color: #fff; box-shadow: 0 2px 8px rgba(59, 130, 246, 0.35); }
-    .btn-primary:hover:not(:disabled) { background: var(--accent-hover); box-shadow: 0 4px 14px rgba(59, 130, 246, 0.5); }
-    .btn-secondary { background: #334155; color: #fff; }
-    .btn-secondary:hover:not(:disabled) { background: #475569; }
-    .btn-danger { background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.4); color: var(--error); }
-    .btn-danger:hover:not(:disabled) { background: rgba(239, 68, 68, 0.3); }
-    .btn:disabled, .btn.loading { opacity: 0.7; cursor: not-allowed; pointer-events: none; }
+      /* Action buttons */
+      .btn {
+        padding: 0.7rem 1.35rem;
+        border-radius: 8px;
+        font-size: 0.9rem;
+        font-weight: 600;
+        cursor: pointer;
+        border: none;
+        transition: all 0.2s;
+        display: inline-flex;
+        align-items: center;
+        gap: 0.45rem;
+        justify-content: center;
+        text-decoration: none;
+      }
+      .btn-primary {
+        background: var(--accent);
+        color: #fff;
+        box-shadow: 0 2px 8px rgba(59, 130, 246, 0.35);
+      }
+      .btn-primary:hover:not(:disabled) {
+        background: var(--accent-hover);
+        box-shadow: 0 4px 14px rgba(59, 130, 246, 0.5);
+      }
+      .btn-secondary {
+        background: #334155;
+        color: #fff;
+      }
+      .btn-secondary:hover:not(:disabled) {
+        background: #475569;
+      }
+      .btn-danger {
+        background: rgba(239, 68, 68, 0.15);
+        border: 1px solid rgba(239, 68, 68, 0.4);
+        color: var(--error);
+      }
+      .btn-danger:hover:not(:disabled) {
+        background: rgba(239, 68, 68, 0.3);
+      }
+      .btn:disabled,
+      .btn.loading {
+        opacity: 0.7;
+        cursor: not-allowed;
+        pointer-events: none;
+      }
 
-    /* Status Badges */
-    .status-badge { display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.25rem 0.75rem; border-radius: 9999px; font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; transition: all 0.2s; }
-    .badge-verified { background: rgba(16, 185, 129, 0.18); color: var(--success); border: 1px solid rgba(16, 185, 129, 0.4); box-shadow: 0 0 8px var(--success-glow); }
-    .badge-unverified { background: rgba(245, 158, 11, 0.15); color: var(--warning); border: 1px solid rgba(245, 158, 11, 0.3); }
-    .badge-error { background: rgba(239, 68, 68, 0.18); color: var(--error); border: 1px solid rgba(239, 68, 68, 0.4); box-shadow: 0 0 8px var(--error-glow); }
+      /* Status Badges */
+      .status-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        padding: 0.25rem 0.75rem;
+        border-radius: 9999px;
+        font-size: 0.75rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+        transition: all 0.2s;
+      }
+      .badge-verified {
+        background: rgba(16, 185, 129, 0.18);
+        color: var(--success);
+        border: 1px solid rgba(16, 185, 129, 0.4);
+        box-shadow: 0 0 8px var(--success-glow);
+      }
+      .badge-unverified {
+        background: rgba(245, 158, 11, 0.15);
+        color: var(--warning);
+        border: 1px solid rgba(245, 158, 11, 0.3);
+      }
+      .badge-error {
+        background: rgba(239, 68, 68, 0.18);
+        color: var(--error);
+        border: 1px solid rgba(239, 68, 68, 0.4);
+        box-shadow: 0 0 8px var(--error-glow);
+      }
 
-    /* Real-time Inline Feedback below inputs */
-    .feedback-box { margin-top: 0.5rem; font-size: 0.82rem; line-height: 1.4; display: flex; align-items: center; gap: 0.45rem; min-height: 1.3rem; transition: all 0.2s; }
-    .feedback-hint { color: var(--text-muted); }
-    .feedback-success { color: var(--success); font-weight: 600; }
-    .feedback-error { color: var(--error); font-weight: 600; }
+      /* Real-time Inline Feedback below inputs */
+      .feedback-box {
+        margin-top: 0.5rem;
+        font-size: 0.82rem;
+        line-height: 1.4;
+        display: flex;
+        align-items: center;
+        gap: 0.45rem;
+        min-height: 1.3rem;
+        transition: all 0.2s;
+      }
+      .feedback-hint {
+        color: var(--text-muted);
+      }
+      .feedback-success {
+        color: var(--success);
+        font-weight: 600;
+      }
+      .feedback-error {
+        color: var(--error);
+        font-weight: 600;
+      }
 
-    /* Animated CSS Spinners */
-    @keyframes spin { 100% { transform: rotate(360deg); } }
-    .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid rgba(255,255,255,0.3); border-top-color: #fff; border-radius: 50%; animation: spin 0.8s linear infinite; vertical-align: middle; }
-    .spinner-dark { border: 2px solid rgba(59, 130, 246, 0.2); border-top-color: var(--accent); }
+      /* Animated CSS Spinners */
+      @keyframes spin {
+        100% {
+          transform: rotate(360deg);
+        }
+      }
+      .spinner {
+        display: inline-block;
+        width: 14px;
+        height: 14px;
+        border: 2px solid rgba(255, 255, 255, 0.3);
+        border-top-color: #fff;
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+        vertical-align: middle;
+      }
+      .spinner-dark {
+        border: 2px solid rgba(59, 130, 246, 0.2);
+        border-top-color: var(--accent);
+      }
 
-    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
-    @media (max-width: 640px) { .grid-2 { grid-template-columns: 1fr; } }
+      /* Modern Floating Toast Notification System */
+      #toastContainer {
+        position: fixed;
+        top: 1.25rem;
+        right: 1.25rem;
+        z-index: 9999;
+        display: flex;
+        flex-direction: column;
+        gap: 0.65rem;
+        pointer-events: none;
+      }
+      .toast {
+        pointer-events: auto;
+        min-width: 300px;
+        max-width: 420px;
+        background: #1e293b;
+        border-radius: 10px;
+        padding: 0.85rem 1.15rem;
+        color: #fff;
+        font-size: 0.88rem;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.75rem;
+        border-left: 4px solid var(--accent);
+        transform: translateX(120%);
+        transition:
+          transform 0.25s cubic-bezier(0.16, 1, 0.3, 1),
+          opacity 0.25s;
+        opacity: 0;
+      }
+      .toast.show {
+        transform: translateX(0);
+        opacity: 1;
+      }
+      .toast-success {
+        border-left-color: var(--success);
+        background: #132223;
+      }
+      .toast-error {
+        border-left-color: var(--error);
+        background: #261619;
+      }
+      .toast-info {
+        border-left-color: var(--accent);
+      }
+      .toast-content {
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+        line-height: 1.4;
+        flex: 1;
+      }
+      .toast-icon {
+        font-size: 1.15rem;
+        flex-shrink: 0;
+      }
+      .toast-close {
+        background: none;
+        border: none;
+        color: var(--text-muted);
+        cursor: pointer;
+        font-size: 1.1rem;
+        line-height: 1;
+        padding: 0.2rem;
+      }
+      .toast-close:hover {
+        color: #fff;
+      }
 
-    /* Modern Floating Toast Notification System */
-    #toastContainer { position: fixed; top: 1.25rem; right: 1.25rem; z-index: 9999; display: flex; flex-direction: column; gap: 0.65rem; pointer-events: none; }
-    .toast { pointer-events: auto; min-width: 300px; max-width: 420px; background: #1e293b; border-radius: 10px; padding: 0.85rem 1.15rem; color: #fff; font-size: 0.88rem; box-shadow: 0 10px 30px rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; border-left: 4px solid var(--accent); transform: translateX(120%); transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.25s; opacity: 0; }
-    .toast.show { transform: translateX(0); opacity: 1; }
-    .toast-success { border-left-color: var(--success); background: #132223; }
-    .toast-error { border-left-color: var(--error); background: #261619; }
-    .toast-info { border-left-color: var(--accent); }
-    .toast-content { display: flex; align-items: center; gap: 0.6rem; line-height: 1.4; flex: 1; }
-    .toast-icon { font-size: 1.15rem; flex-shrink: 0; }
-    .toast-close { background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 1.1rem; line-height: 1; padding: 0.2rem; }
-    .toast-close:hover { color: #fff; }
+      /* Alert Banner (fallback) */
+      .alert {
+        padding: 0.9rem 1.15rem;
+        border-radius: 10px;
+        font-size: 0.9rem;
+        margin-bottom: 1.5rem;
+        display: none;
+        line-height: 1.45;
+        animation: fadeIn 0.2s ease-in;
+      }
+      @keyframes fadeIn {
+        from {
+          opacity: 0;
+          transform: translateY(-6px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+      .alert-success {
+        background: rgba(16, 185, 129, 0.15);
+        border: 1px solid rgba(16, 185, 129, 0.4);
+        color: #6ee7b7;
+      }
+      .alert-error {
+        background: rgba(239, 68, 68, 0.15);
+        border: 1px solid rgba(239, 68, 68, 0.4);
+        color: #fca5a5;
+      }
 
-    /* Alert Banner (fallback) */
-    .alert { padding: 0.9rem 1.15rem; border-radius: 10px; font-size: 0.9rem; margin-bottom: 1.5rem; display: none; line-height: 1.45; animation: fadeIn 0.2s ease-in; }
-    @keyframes fadeIn { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
-    .alert-success { background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.4); color: #6ee7b7; }
-    .alert-error { background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.4); color: #fca5a5; }
+      /* Modal */
+      .modal-backdrop {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.75);
+        backdrop-filter: blur(4px);
+        display: none;
+        align-items: center;
+        justify-content: center;
+        z-index: 500;
+        padding: 1rem;
+      }
+      .modal-box {
+        background: var(--card-bg);
+        border: 1px solid var(--card-border);
+        border-radius: 14px;
+        width: 100%;
+        max-width: 480px;
+        padding: 1.75rem;
+        box-shadow: 0 20px 40px rgba(0, 0, 0, 0.6);
+      }
+      .modal-title {
+        font-size: 1.25rem;
+        font-weight: 700;
+        margin-bottom: 0.5rem;
+        color: #fff;
+      }
+      .modal-desc {
+        font-size: 0.9rem;
+        color: var(--text-muted);
+        line-height: 1.5;
+        margin-bottom: 1.5rem;
+      }
+      .modal-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 0.75rem;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Floating Toast Notification System -->
+    <div id="toastContainer"></div>
 
-    /* Modal */
-    .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.75); backdrop-filter: blur(4px); display: none; align-items: center; justify-content: center; z-index: 500; padding: 1rem; }
-    .modal-box { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 14px; width: 100%; max-width: 480px; padding: 1.75rem; box-shadow: 0 20px 40px rgba(0,0,0,0.6); }
-    .modal-title { font-size: 1.25rem; font-weight: 700; margin-bottom: 0.5rem; color: #fff; }
-    .modal-desc { font-size: 0.9rem; color: var(--text-muted); line-height: 1.5; margin-bottom: 1.5rem; }
-    .modal-actions { display: flex; justify-content: flex-end; gap: 0.75rem; }
-  </style>
-</head>
-<body>
-
-  <!-- Floating Toast Notification System -->
-  <div id="toastContainer"></div>
-
-  <!-- Top Navigation Bar -->
-  <nav class="top-nav">
-    <div class="brand">
-      <div class="brand-icon">⚡</div>
-      <span>Telegram Media Suite</span>
-    </div>
-    <div class="nav-links">
-      <a href="/settings" class="nav-link active">⚙️ Settings & APIs</a>
-      <a href="/downloads" class="nav-link">⬇️ Media Downloader</a>
-      <a href="/stremio" class="nav-link">📺 Stremio Add-on</a>
-    </div>
-  </nav>
-
-  <div class="container">
-    <div class="page-header">
-      <h1>Common API & System Configuration</h1>
-      <p>Configure shared Telegram and TMDB credentials. Both the Local Downloader and Stremio Streaming Add-on run independently using these verified credentials.</p>
-    </div>
-
-    <div id="statusAlert" class="alert"></div>
-
-    <!-- Telegram API Card -->
-    <div class="card">
-      <div class="card-title">
-        <span>1. Telegram Credentials</span>
-        <span id="tgStatusBadge" class="status-badge badge-unverified">NOT VERIFIED</span>
+    <!-- Top Navigation Bar -->
+    <nav class="top-nav">
+      <div class="brand">
+        <div class="brand-icon">⚡</div>
+        <span>T-Stream</span>
       </div>
-      <div class="card-subtitle">
-        Obtain API ID and API Hash from <a href="https://my.telegram.org/apps" target="_blank" style="color:var(--accent); text-decoration:none;">my.telegram.org/apps</a>, and Bot Token from <a href="https://t.me/BotFather" target="_blank" style="color:var(--accent); text-decoration:none;">@BotFather</a>.
+      <div class="nav-links">
+        <a href="/stremio" class="nav-link">📺 Stremio Add-on</a>
+        <a href="/settings" class="nav-link active">⚙️ Settings & Credentials</a>
+      </div>
+    </nav>
+
+    <div class="container">
+      <div class="page-header">
+        <h1 id="pageTitle">Telegram & API Configuration</h1>
+        <p id="pageDesc">Configure your credentials for high-speed Stremio streaming.</p>
       </div>
 
-      <div class="grid-2">
+      <div id="statusAlert" class="alert"></div>
+
+      <!-- Telegram Bot Token Card -->
+      <div class="card" id="tgCard">
+        <div class="card-title">
+          <span>1. Telegram Bot Token</span>
+          <span id="tgStatusBadge" class="status-badge badge-unverified"
+            >NOT VERIFIED</span
+          >
+        </div>
+        <div class="card-subtitle">
+          Enter your Telegram Bot Token obtained from
+          <a
+            href="https://t.me/BotFather"
+            target="_blank"
+            style="color: var(--accent); text-decoration: none"
+            >@BotFather</a
+          >.
+        </div>
+
         <div class="form-group">
-          <label class="form-label" for="apiId">Telegram API ID <span class="req">*</span></label>
-          <input type="number" id="apiId" class="form-input" placeholder="e.g. 12345678" autocomplete="off" spellcheck="false">
+          <label class="form-label" for="botToken"
+            >Telegram Bot Token <span class="req">*</span></label
+          >
+          <div class="input-with-actions">
+            <input
+              type="text"
+              id="botToken"
+              class="form-input masked"
+              placeholder="e.g. 1234567890:ABCdefGhIJKlmNoPQRsTUVwxyZ"
+              autocomplete="off"
+              spellcheck="false"
+              data-lpignore="true"
+            />
+            <button
+              type="button"
+              class="btn-toggle-mask"
+              id="btnToggleTgMask"
+              onclick="toggleMask('botToken', this)"
+              title="Show/Hide Token"
+            >
+              👁️
+            </button>
+            <button
+              type="button"
+              class="btn btn-secondary"
+              id="btnVerifyTg"
+              onclick="verifyTelegram(false)"
+            >
+              Verify Telegram
+            </button>
+          </div>
+          <div class="feedback-box" id="tgFeedback">
+            <span class="feedback-hint"
+              >Click "Verify Telegram" to validate your bot identity before saving.</span
+            >
+          </div>
         </div>
+      </div>
+
+      <!-- TMDB API Card (Standard Mode: Shown only when ADULT_ONLY is False) -->
+      <div class="card" id="tmdbCard">
+        <div class="card-title">
+          <span id="tmdbCardTitle">2. The Movie Database (TMDB) API</span>
+          <span id="tmdbStatusBadge" class="status-badge badge-unverified"
+            >NOT VERIFIED</span
+          >
+        </div>
+        <div class="card-subtitle">
+          Used for poster art, episode identification, metadata, and auto-sorting movies
+          and TV series. Free from
+          <a
+            href="https://www.themoviedb.org/settings/api"
+            target="_blank"
+            style="color: var(--accent); text-decoration: none"
+            >themoviedb.org</a
+          >.
+        </div>
+
         <div class="form-group">
-          <label class="form-label" for="apiHash">Telegram API Hash <span class="req">*</span></label>
-          <input type="text" id="apiHash" class="form-input" placeholder="e.g. 0123456789abcdef0123456789abcdef" autocomplete="off" spellcheck="false">
+          <label class="form-label" for="tmdbKey">TMDB API Key (v3)</label>
+          <div class="input-with-actions">
+            <input
+              type="text"
+              id="tmdbKey"
+              class="form-input masked"
+              placeholder="32-character TMDB API Key v3"
+              autocomplete="off"
+              spellcheck="false"
+              data-lpignore="true"
+            />
+            <button
+              type="button"
+              class="btn-toggle-mask"
+              id="btnToggleTmdbMask"
+              onclick="toggleMask('tmdbKey', this)"
+              title="Show/Hide Key"
+            >
+              👁️
+            </button>
+            <button
+              type="button"
+              class="btn btn-secondary"
+              id="btnVerifyTmdb"
+              onclick="verifyTmdb(false)"
+            >
+              Verify TMDB
+            </button>
+          </div>
+          <div class="feedback-box" id="tmdbFeedback">
+            <span class="feedback-hint"
+              >Test your key to ensure artwork and episode tagging will work
+              properly.</span
+            >
+          </div>
         </div>
       </div>
 
-      <div class="form-group">
-        <label class="form-label" for="botToken">Telegram Bot Token <span class="req">*</span></label>
-        <div class="input-with-actions">
-          <input type="text" id="botToken" class="form-input masked" placeholder="e.g. 1234567890:ABCdefGhIJKlmNoPQRsTUVwxyZ" autocomplete="off" spellcheck="false" data-lpignore="true">
-          <button type="button" class="btn-toggle-mask" id="btnToggleTgMask" onclick="toggleMask('botToken', this)" title="Show/Hide Token">👁️</button>
-          <button type="button" class="btn btn-secondary" id="btnVerifyTg" onclick="verifyTelegram(false)">Verify Telegram</button>
+      <!-- StashDB API Card (Adult Mode: Shown only when ADULT_ONLY is True) -->
+      <div class="card" id="stashCard" style="display: none">
+        <div class="card-title">
+          <span id="stashCardTitle">2. StashDB API Key</span>
+          <span id="stashStatusBadge" class="status-badge badge-unverified"
+            >NOT VERIFIED</span
+          >
         </div>
-        <div class="feedback-box" id="tgFeedback">
-          <span class="feedback-hint">Click "Verify Telegram" to validate your bot identity before saving.</span>
+        <div class="card-subtitle">
+          Connects to StashDB GraphQL for adult scenes, performers, studios, and artwork.
+          Free from
+          <a
+            href="https://stashdb.org"
+            target="_blank"
+            style="color: var(--accent); text-decoration: none"
+            >stashdb.org</a
+          >.
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="stashKey">StashDB API Key</label>
+          <div class="input-with-actions">
+            <input
+              type="text"
+              id="stashKey"
+              class="form-input masked"
+              placeholder="StashDB API Key from stashdb.org"
+              autocomplete="off"
+              spellcheck="false"
+              data-lpignore="true"
+            />
+            <button
+              type="button"
+              class="btn-toggle-mask"
+              id="btnToggleStashMask"
+              onclick="toggleMask('stashKey', this)"
+              title="Show/Hide Key"
+            >
+              👁️
+            </button>
+            <button
+              type="button"
+              class="btn btn-secondary"
+              id="btnVerifyStash"
+              onclick="verifyStash(false)"
+            >
+              Verify StashDB
+            </button>
+          </div>
+          <div class="feedback-box" id="stashFeedback">
+            <span class="feedback-hint"
+              >Validate your StashDB key to enable scene identification and adult
+              categorization.</span
+            >
+          </div>
         </div>
       </div>
-    </div>
 
-    <!-- TMDB API Card -->
-    <div class="card">
-      <div class="card-title">
-        <span>2. The Movie Database (TMDB) API</span>
-        <span id="tmdbStatusBadge" class="status-badge badge-unverified">NOT VERIFIED</span>
-      </div>
-      <div class="card-subtitle">
-        Used for poster art, episode identification, metadata, and auto-sorting movies and TV series. Free from <a href="https://www.themoviedb.org/settings/api" target="_blank" style="color:var(--accent); text-decoration:none;">themoviedb.org</a>.
-      </div>
-
-      <div class="form-group">
-        <label class="form-label" for="tmdbKey">TMDB API Key (v3)</label>
-        <div class="input-with-actions">
-          <input type="text" id="tmdbKey" class="form-input masked" placeholder="32-character TMDB API Key v3" autocomplete="off" spellcheck="false" data-lpignore="true">
-          <button type="button" class="btn-toggle-mask" id="btnToggleTmdbMask" onclick="toggleMask('tmdbKey', this)" title="Show/Hide Key">👁️</button>
-          <button type="button" class="btn btn-secondary" id="btnVerifyTmdb" onclick="verifyTmdb(false)">Verify TMDB</button>
+      <!-- Save & Apply -->
+      <div
+        class="card"
+        style="
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          flex-wrap: wrap;
+          gap: 1rem;
+        "
+      >
+        <div>
+          <div style="font-weight: 700; font-size: 1.05rem; margin-bottom: 0.25rem">
+            Save System Credentials
+          </div>
+          <div style="font-size: 0.85rem; color: var(--text-muted)">
+            Saves API keys without starting catalog scans.
+          </div>
         </div>
-        <div class="feedback-box" id="tmdbFeedback">
-          <span class="feedback-hint">Test your key to ensure artwork and episode tagging will work properly.</span>
-        </div>
-      </div>
-    </div>
-
-    <!-- Save & Apply -->
-    <div class="card" style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:1rem;">
-      <div>
-        <div style="font-weight:700; font-size:1.05rem; margin-bottom:0.25rem;">Save System Credentials</div>
-        <div style="font-size:0.85rem; color:var(--text-muted);">Saves shared API keys without starting downloads or catalog scans.</div>
-      </div>
-      <button type="button" class="btn btn-primary" id="btnSave" onclick="saveCredentials()" style="padding:0.75rem 1.85rem; font-size:0.95rem;">
-        💾 Save Credentials
-      </button>
-    </div>
-
-    <!-- Clean Reset Zone -->
-    <div class="card" style="border-color: rgba(239, 68, 68, 0.3); background: rgba(239, 68, 68, 0.04);">
-      <div class="card-title" style="color: var(--error);">
-        <span>3. Clean Reset & Maintenance</span>
-      </div>
-      <div class="card-subtitle">
-        Wipe all stored library indexing, download queues, and checkpoints to start completely fresh.
-      </div>
-      <div style="display:flex; justify-content:flex-end;">
-        <button type="button" class="btn btn-danger" onclick="openResetModal()">
-          🧹 Wipe All Data & Fresh Start
+        <button
+          type="button"
+          class="btn btn-primary"
+          id="btnSave"
+          onclick="saveCredentials()"
+          style="padding: 0.75rem 1.85rem; font-size: 0.95rem"
+        >
+          💾 Save Credentials
         </button>
       </div>
+
+      <!-- Clean Reset Zone -->
+      <div
+        class="card"
+        id="resetCard"
+        style="border-color: rgba(239, 68, 68, 0.3); background: rgba(239, 68, 68, 0.04)"
+      >
+        <div class="card-title" style="color: var(--error)">
+          <span id="resetCardTitle">3. Clean Reset & Maintenance</span>
+        </div>
+        <div class="card-subtitle">
+          Wipe all stored library indexing and video records to start completely fresh.
+        </div>
+        <div style="display: flex; justify-content: flex-end">
+          <button type="button" class="btn btn-danger" onclick="openResetModal()">
+            🧹 Wipe All Data & Fresh Start
+          </button>
+        </div>
+      </div>
     </div>
 
-  </div>
-
-  <!-- Reset Confirmation Modal -->
-  <div class="modal-backdrop" id="resetModal">
-    <div class="modal-box">
-      <div class="modal-title">Confirm Full System Reset</div>
-      <div class="modal-desc">
-        Are you sure you want to clean out all current library indexing, download queues, and checkpoints? This will restore a clean slate with zero stored records.
-      </div>
-      <div class="modal-actions">
-        <button type="button" class="btn btn-secondary" onclick="closeResetModal()">Cancel</button>
-        <button type="button" class="btn btn-danger" onclick="performReset()">Yes, Wipe Everything</button>
+    <!-- Reset Confirmation Modal -->
+    <div class="modal-backdrop" id="resetModal">
+      <div class="modal-box">
+        <div class="modal-title">Confirm Full System Reset</div>
+        <div class="modal-desc">
+          Are you sure you want to clean out all current library indexing and checkpoints?
+          This will restore a clean slate with zero stored records.
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-secondary" onclick="closeResetModal()">
+            Cancel
+          </button>
+          <button type="button" class="btn btn-danger" onclick="performReset()">
+            Yes, Wipe Everything
+          </button>
+        </div>
       </div>
     </div>
-  </div>
 
-  <script>
-    // --- Toast Notification Utility ---
-    function showToast(message, type = 'info', duration = 4000) {
-      const container = document.getElementById('toastContainer');
-      const toast = document.createElement('div');
-      toast.className = `toast toast-${type}`;
-      
-      let icon = 'ℹ️';
-      if (type === 'success') icon = '✓';
-      if (type === 'error') icon = '✕';
-      
-      toast.innerHTML = `
+    <script>
+      const IS_ADULT_ONLY =
+        typeof window.ADULT_ONLY !== 'undefined' ? Boolean(window.ADULT_ONLY) : false;
+
+      function applyAdultMode(isAdult) {
+        const pageTitle = document.getElementById('pageTitle');
+        const pageDesc = document.getElementById('pageDesc');
+        const tmdbCard = document.getElementById('tmdbCard');
+        const stashCard = document.getElementById('stashCard');
+        const resetCardTitle = document.getElementById('resetCardTitle');
+
+        if (isAdult) {
+          if (pageTitle) pageTitle.innerText = 'Telegram & StashDB API Configuration';
+          if (pageDesc)
+            pageDesc.innerText =
+              'Configure your Telegram Bot Token and StashDB API key for adult streaming on Stremio.';
+          if (tmdbCard) tmdbCard.style.display = 'none';
+          if (stashCard) stashCard.style.display = 'block';
+          if (resetCardTitle) resetCardTitle.innerText = '3. Clean Reset & Maintenance';
+        } else {
+          if (pageTitle) pageTitle.innerText = 'Telegram & TMDB API Configuration';
+          if (pageDesc)
+            pageDesc.innerText =
+              'Configure your Telegram Bot Token and TMDB API key for movies & series on Stremio.';
+          if (stashCard) stashCard.style.display = 'none';
+          if (tmdbCard) tmdbCard.style.display = 'block';
+          if (resetCardTitle) resetCardTitle.innerText = '3. Clean Reset & Maintenance';
+        }
+      }
+
+      // Apply adult mode immediately on DOM parse
+      applyAdultMode(IS_ADULT_ONLY);
+
+      // --- Toast Notification Utility ---
+      function showToast(message, type = 'info', duration = 4000) {
+        const container = document.getElementById('toastContainer');
+        const toast = document.createElement('div');
+        toast.className = `toast toast-${type}`;
+
+        let icon = 'ℹ️';
+        if (type === 'success') icon = '✓';
+        if (type === 'error') icon = '✕';
+
+        toast.innerHTML = `
         <div class="toast-content">
           <span class="toast-icon">${icon}</span>
           <span>${message}</span>
         </div>
         <button class="toast-close" onclick="this.parentElement.remove()">×</button>
       `;
-      
-      container.appendChild(toast);
-      // Trigger animation
-      setTimeout(() => toast.classList.add('show'), 10);
-      
-      const timer = setTimeout(() => {
-        toast.classList.remove('show');
-        setTimeout(() => toast.remove(), 250);
-      }, duration);
 
-      toast.addEventListener('click', () => {
-        clearTimeout(timer);
-        toast.classList.remove('show');
-        setTimeout(() => toast.remove(), 250);
-      });
-    }
+        container.appendChild(toast);
+        setTimeout(() => toast.classList.add('show'), 10);
 
-    // Toggle mask between visible text and password bullet dots
-    function toggleMask(inputId, btn) {
-      const input = document.getElementById(inputId);
-      if (input.type === 'password') {
-        input.type = 'text';
-        btn.innerText = '👁️';
-      } else {
-        input.type = 'password';
-        btn.innerText = '🔒';
-      }
-    }
+        const timer = setTimeout(() => {
+          toast.classList.remove('show');
+          setTimeout(() => toast.remove(), 250);
+        }, duration);
 
-    // --- Configuration Loading ---
-    async function loadCurrentConfig() {
-      try {
-        const res = await fetch('/api/config');
-        if (!res.ok) return;
-        const cfg = await res.json();
-
-        if (cfg.api_id) document.getElementById('apiId').value = cfg.api_id;
-        if (cfg.api_hash) document.getElementById('apiHash').value = cfg.api_hash;
-        if (cfg.bot_token) document.getElementById('botToken').value = cfg.bot_token;
-        if (cfg.tmdb_api_key) document.getElementById('tmdbKey').value = cfg.tmdb_api_key;
-
-        // Perform initial verification check seamlessly
-        if (cfg.bot_token) {
-          verifyTelegram(true);
-        }
-        if (cfg.tmdb_api_key) {
-          verifyTmdb(true);
-        }
-      } catch (err) {
-        console.error('Failed to load initial settings:', err);
-      }
-    }
-
-    // --- Telegram Bot Verification ---
-    async function verifyTelegram(silent = false) {
-      const token = document.getElementById('botToken').value.trim();
-      const badge = document.getElementById('tgStatusBadge');
-      const feedback = document.getElementById('tgFeedback');
-      const btn = document.getElementById('btnVerifyTg');
-
-      if (!token) {
-        badge.className = 'status-badge badge-unverified';
-        badge.innerText = 'NOT VERIFIED';
-        feedback.innerHTML = '<span class="feedback-error">⚠️ Please enter a Bot Token to verify.</span>';
-        if (!silent) showToast('Please enter a Bot Token first.', 'error');
-        return;
-      }
-
-      if (!silent) {
-        btn.innerHTML = '<span class="spinner"></span> Verifying...';
-        btn.disabled = true;
-      }
-      feedback.innerHTML = '<span class="feedback-hint"><span class="spinner spinner-dark"></span> Validating bot credentials with Telegram API...</span>';
-
-      try {
-        const res = await fetch('/api/verify-telegram', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ bot_token: token })
+        toast.addEventListener('click', () => {
+          clearTimeout(timer);
+          toast.classList.remove('show');
+          setTimeout(() => toast.remove(), 250);
         });
-        const data = await res.json();
+      }
 
-        if (data.valid) {
-          badge.className = 'status-badge badge-verified';
-          badge.innerText = `✓ @${data.bot_username || 'Bot'} VERIFIED`;
-          feedback.innerHTML = `<span class="feedback-success">✓ Connected as <strong>@${data.bot_username}</strong> (${data.bot_name || 'Bot'})</span>`;
-          if (!silent) showToast(`✓ Telegram Bot verified: @${data.bot_username}`, 'success');
+      // Toggle mask between visible text and password bullet dots
+      function toggleMask(inputId, btn) {
+        const input = document.getElementById(inputId);
+        if (input.type === 'password') {
+          input.type = 'text';
+          btn.innerText = '👁️';
         } else {
-          badge.className = 'status-badge badge-error';
-          badge.innerText = 'VERIFICATION FAILED';
-          feedback.innerHTML = `<span class="feedback-error">✕ ${data.message || 'Invalid bot token'}</span>`;
-          if (!silent) showToast(data.message || 'Telegram verification failed.', 'error');
+          input.type = 'password';
+          btn.innerText = '🔒';
         }
-      } catch (err) {
-        badge.className = 'status-badge badge-error';
-        badge.innerText = 'NETWORK ERROR';
-        feedback.innerHTML = '<span class="feedback-error">✕ Network error contacting Telegram API.</span>';
-        if (!silent) showToast('Network error contacting Telegram API.', 'error');
-      } finally {
+      }
+
+      // --- Configuration Loading ---
+      async function loadCurrentConfig() {
+        try {
+          const res = await fetch('/api/config');
+          if (!res.ok) return;
+          const cfg = await res.json();
+
+          const isAdult =
+            typeof cfg.adult_only !== 'undefined' ? cfg.adult_only : IS_ADULT_ONLY;
+          applyAdultMode(isAdult);
+
+          if (cfg.bot_token) document.getElementById('botToken').value = cfg.bot_token;
+          if (cfg.tmdb_api_key && document.getElementById('tmdbKey'))
+            document.getElementById('tmdbKey').value = cfg.tmdb_api_key;
+          if (cfg.stashdb_api_key && document.getElementById('stashKey'))
+            document.getElementById('stashKey').value = cfg.stashdb_api_key;
+
+          // Perform initial verification check seamlessly
+          if (cfg.bot_token) {
+            verifyTelegram(true);
+          }
+          if (!isAdult && cfg.tmdb_api_key) {
+            verifyTmdb(true);
+          }
+          if (isAdult && cfg.stashdb_api_key) {
+            verifyStash(true);
+          }
+        } catch (err) {
+          console.error('Failed to load initial settings:', err);
+        }
+      }
+
+      // --- Telegram Bot Verification ---
+      async function verifyTelegram(silent = false) {
+        const token = document.getElementById('botToken').value.trim();
+        const badge = document.getElementById('tgStatusBadge');
+        const feedback = document.getElementById('tgFeedback');
+        const btn = document.getElementById('btnVerifyTg');
+
+        if (!token) {
+          badge.className = 'status-badge badge-unverified';
+          badge.innerText = 'NOT VERIFIED';
+          feedback.innerHTML =
+            '<span class="feedback-error">⚠️ Please enter a Bot Token to verify.</span>';
+          if (!silent) showToast('Please enter a Bot Token first.', 'error');
+          return;
+        }
+
         if (!silent) {
-          btn.innerHTML = 'Verify Telegram';
+          btn.innerHTML = '<span class="spinner"></span> Verifying...';
+          btn.disabled = true;
+        }
+        feedback.innerHTML =
+          '<span class="feedback-hint"><span class="spinner spinner-dark"></span> Validating bot credentials with Telegram API...</span>';
+
+        try {
+          const res = await fetch('/api/verify-telegram', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ bot_token: token }),
+          });
+          const data = await res.json();
+
+          if (data.valid) {
+            badge.className = 'status-badge badge-verified';
+            badge.innerText = `✓ BOT VERIFIED`;
+            feedback.innerHTML = `<span class="feedback-success">✓ Connected as <strong>@${data.bot_username}</strong> (${data.bot_name || 'Bot'})</span>`;
+            if (!silent)
+              showToast(`✓ Telegram Bot verified: @${data.bot_username}`, 'success');
+          } else {
+            badge.className = 'status-badge badge-error';
+            badge.innerText = 'VERIFICATION FAILED';
+            feedback.innerHTML = `<span class="feedback-error">✕ ${data.message || 'Invalid bot token'}</span>`;
+            if (!silent)
+              showToast(data.message || 'Telegram verification failed.', 'error');
+          }
+        } catch (err) {
+          badge.className = 'status-badge badge-error';
+          badge.innerText = 'NETWORK ERROR';
+          feedback.innerHTML =
+            '<span class="feedback-error">✕ Network error contacting Telegram API.</span>';
+          if (!silent) showToast('Network error contacting Telegram API.', 'error');
+        } finally {
+          if (!silent) {
+            btn.innerHTML = 'Verify Telegram';
+            btn.disabled = false;
+          }
+        }
+      }
+
+      // --- TMDB API Key Verification ---
+      async function verifyTmdb(silent = false) {
+        const input = document.getElementById('tmdbKey');
+        if (!input) return;
+        const key = input.value.trim();
+        const badge = document.getElementById('tmdbStatusBadge');
+        const feedback = document.getElementById('tmdbFeedback');
+        const btn = document.getElementById('btnVerifyTmdb');
+
+        if (!key) {
+          badge.className = 'status-badge badge-unverified';
+          badge.innerText = 'NOT VERIFIED';
+          feedback.innerHTML =
+            '<span class="feedback-hint">Test your key to ensure artwork and episode tagging will work properly.</span>';
+          if (!silent) showToast('Please enter a TMDB API Key to verify.', 'error');
+          return;
+        }
+
+        if (!silent) {
+          btn.innerHTML = '<span class="spinner"></span> Verifying...';
+          btn.disabled = true;
+        }
+        feedback.innerHTML =
+          '<span class="feedback-hint"><span class="spinner spinner-dark"></span> Validating key with The Movie Database API...</span>';
+
+        try {
+          const res = await fetch('/api/verify-tmdb', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ api_key: key }),
+          });
+          const data = await res.json();
+
+          if (data.valid) {
+            badge.className = 'status-badge badge-verified';
+            badge.innerText = '✓ TMDB VALID';
+            feedback.innerHTML =
+              '<span class="feedback-success">✓ TMDB API Key valid! Metadata and artwork services enabled.</span>';
+            if (!silent) showToast('✓ TMDB API Key verified successfully!', 'success');
+          } else {
+            badge.className = 'status-badge badge-error';
+            badge.innerText = 'INVALID KEY';
+            feedback.innerHTML = `<span class="feedback-error">✕ ${data.message || 'Invalid TMDB API Key'}</span>`;
+            if (!silent)
+              showToast(data.message || 'TMDB key verification failed.', 'error');
+          }
+        } catch (err) {
+          badge.className = 'status-badge badge-error';
+          badge.innerText = 'NETWORK ERROR';
+          feedback.innerHTML =
+            '<span class="feedback-error">✕ Network error contacting TMDB API.</span>';
+          if (!silent) showToast('Network error contacting TMDB API.', 'error');
+        } finally {
+          if (!silent) {
+            btn.innerHTML = 'Verify TMDB';
+            btn.disabled = false;
+          }
+        }
+      }
+
+      // --- StashDB API Key Verification ---
+      async function verifyStash(silent = false) {
+        const input = document.getElementById('stashKey');
+        if (!input) return;
+        const key = input.value.trim();
+        const badge = document.getElementById('stashStatusBadge');
+        const feedback = document.getElementById('stashFeedback');
+        const btn = document.getElementById('btnVerifyStash');
+
+        if (!key) {
+          badge.className = 'status-badge badge-unverified';
+          badge.innerText = 'NOT CONFIGURED';
+          feedback.innerHTML =
+            '<span class="feedback-hint">Enter your StashDB API Key to identify adult content and artwork.</span>';
+          if (!silent) showToast('Please enter a StashDB API Key to verify.', 'error');
+          return;
+        }
+
+        if (!silent) {
+          btn.innerHTML = '<span class="spinner"></span> Verifying...';
+          btn.disabled = true;
+        }
+        feedback.innerHTML =
+          '<span class="feedback-hint"><span class="spinner spinner-dark"></span> Validating key with StashDB GraphQL...</span>';
+
+        try {
+          const res = await fetch('/api/verify-stashdb', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ api_key: key }),
+          });
+          const data = await res.json();
+
+          if (data.valid) {
+            badge.className = 'status-badge badge-verified';
+            badge.innerText = '✓ STASHDB VALID';
+            feedback.innerHTML =
+              '<span class="feedback-success">✓ StashDB API Key valid! Adult scene catalog and artwork enabled.</span>';
+            if (!silent) showToast('✓ StashDB API Key verified successfully!', 'success');
+          } else {
+            badge.className = 'status-badge badge-error';
+            badge.innerText = 'INVALID KEY';
+            feedback.innerHTML = `<span class="feedback-error">✕ ${data.message || 'Invalid StashDB API Key'}</span>`;
+            if (!silent)
+              showToast(data.message || 'StashDB key verification failed.', 'error');
+          }
+        } catch (err) {
+          badge.className = 'status-badge badge-error';
+          badge.innerText = 'NETWORK ERROR';
+          feedback.innerHTML =
+            '<span class="feedback-error">✕ Network error contacting StashDB API.</span>';
+          if (!silent) showToast('Network error contacting StashDB API.', 'error');
+        } finally {
+          if (!silent) {
+            btn.innerHTML = 'Verify StashDB';
+            btn.disabled = false;
+          }
+        }
+      }
+
+      // --- Save System Credentials ---
+      async function saveCredentials() {
+        const botToken = document.getElementById('botToken').value.trim();
+        const tmdbKey = document.getElementById('tmdbKey')
+          ? document.getElementById('tmdbKey').value.trim()
+          : '';
+        const stashKey = document.getElementById('stashKey')
+          ? document.getElementById('stashKey').value.trim()
+          : '';
+        const btn = document.getElementById('btnSave');
+
+        if (!botToken) {
+          showToast('Please provide your Telegram Bot Token.', 'error');
+          showAlert('Please provide your Telegram Bot Token.', 'error');
+          document.getElementById('botToken').focus();
+          return;
+        }
+
+        btn.innerHTML = '<span class="spinner"></span> Saving Credentials...';
+        btn.disabled = true;
+
+        try {
+          const res = await fetch('/api/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              bot_token: botToken,
+              login_mode: 'bot',
+              session_string: '',
+              tmdb_api_key: tmdbKey,
+              stashdb_api_key: stashKey,
+            }),
+          });
+
+          const data = await res.json();
+          if (res.ok && data.success) {
+            showToast('✓ Credentials saved successfully!', 'success');
+            showAlert(
+              '✓ Credentials saved successfully! You can now configure Stremio streaming channels.',
+              'success',
+            );
+            verifyTelegram(true);
+            if (tmdbKey) verifyTmdb(true);
+            if (stashKey) verifyStash(true);
+          } else {
+            showToast(
+              data.detail || data.message || 'Failed saving credentials.',
+              'error',
+            );
+            showAlert(
+              data.detail || data.message || 'Failed saving credentials.',
+              'error',
+            );
+          }
+        } catch (err) {
+          showToast('Network error while saving settings: ' + err.message, 'error');
+          showAlert('Network error while saving settings: ' + err.message, 'error');
+        } finally {
+          btn.innerHTML = '💾 Save Credentials';
           btn.disabled = false;
         }
       }
-    }
 
-    // --- TMDB API Key Verification ---
-    async function verifyTmdb(silent = false) {
-      const key = document.getElementById('tmdbKey').value.trim();
-      const badge = document.getElementById('tmdbStatusBadge');
-      const feedback = document.getElementById('tmdbFeedback');
-      const btn = document.getElementById('btnVerifyTmdb');
-
-      if (!key) {
-        badge.className = 'status-badge badge-unverified';
-        badge.innerText = 'NOT VERIFIED';
-        feedback.innerHTML = '<span class="feedback-hint">Test your key to ensure artwork and episode tagging will work properly.</span>';
-        if (!silent) showToast('Please enter a TMDB API Key to verify.', 'error');
-        return;
+      // --- Modal & Reset System ---
+      function openResetModal() {
+        document.getElementById('resetModal').style.display = 'flex';
+      }
+      function closeResetModal() {
+        document.getElementById('resetModal').style.display = 'none';
       }
 
-      if (!silent) {
-        btn.innerHTML = '<span class="spinner"></span> Verifying...';
-        btn.disabled = true;
-      }
-      feedback.innerHTML = '<span class="feedback-hint"><span class="spinner spinner-dark"></span> Validating key with The Movie Database API...</span>';
-
-      try {
-        const res = await fetch('/api/verify-tmdb', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ api_key: key })
-        });
-        const data = await res.json();
-
-        if (data.valid) {
-          badge.className = 'status-badge badge-verified';
-          badge.innerText = '✓ TMDB VALID';
-          feedback.innerHTML = '<span class="feedback-success">✓ TMDB API Key valid! Metadata and artwork services enabled.</span>';
-          if (!silent) showToast('✓ TMDB API Key verified successfully!', 'success');
-        } else {
-          badge.className = 'status-badge badge-error';
-          badge.innerText = 'INVALID KEY';
-          feedback.innerHTML = `<span class="feedback-error">✕ ${data.message || 'Invalid TMDB API Key'}</span>`;
-          if (!silent) showToast(data.message || 'TMDB key verification failed.', 'error');
-        }
-      } catch (err) {
-        badge.className = 'status-badge badge-error';
-        badge.innerText = 'NETWORK ERROR';
-        feedback.innerHTML = '<span class="feedback-error">✕ Network error contacting TMDB API.</span>';
-        if (!silent) showToast('Network error contacting TMDB API.', 'error');
-      } finally {
-        if (!silent) {
-          btn.innerHTML = 'Verify TMDB';
-          btn.disabled = false;
+      async function performReset() {
+        closeResetModal();
+        showToast('Wiping system data...', 'info');
+        try {
+          const res = await fetch('/api/system/reset', { method: 'POST' });
+          const data = await res.json();
+          if (data.success) {
+            showToast('✓ System wiped clean successfully!', 'success');
+            showAlert(
+              'System wiped clean successfully! All library records are cleared.',
+              'success',
+            );
+            setTimeout(() => location.reload(), 1500);
+          } else {
+            showToast('Reset error: ' + (data.message || 'unknown'), 'error');
+            showAlert('Reset error: ' + (data.message || 'unknown'), 'error');
+          }
+        } catch (err) {
+          showToast('Network error performing reset: ' + err.message, 'error');
+          showAlert('Network error performing reset: ' + err.message, 'error');
         }
       }
-    }
 
-    // --- Save System Credentials ---
-    async function saveCredentials() {
-      const apiIdRaw = document.getElementById('apiId').value.trim();
-      const apiId = parseInt(apiIdRaw);
-      const apiHash = document.getElementById('apiHash').value.trim();
-      const botToken = document.getElementById('botToken').value.trim();
-      const tmdbKey = document.getElementById('tmdbKey').value.trim();
-      const btn = document.getElementById('btnSave');
-
-      if (!apiIdRaw || isNaN(apiId)) {
-        showToast('Please provide a valid numeric Telegram API ID.', 'error');
-        showAlert('Please provide a valid numeric Telegram API ID.', 'error');
-        document.getElementById('apiId').focus();
-        return;
-      }
-      if (!apiHash) {
-        showToast('Please provide your Telegram API Hash.', 'error');
-        showAlert('Please provide your Telegram API Hash.', 'error');
-        document.getElementById('apiHash').focus();
-        return;
-      }
-      if (!botToken) {
-        showToast('Please provide your Telegram Bot Token.', 'error');
-        showAlert('Please provide your Telegram Bot Token.', 'error');
-        document.getElementById('botToken').focus();
-        return;
+      function showAlert(msg, type) {
+        const box = document.getElementById('statusAlert');
+        box.className = `alert alert-${type}`;
+        box.innerText = msg;
+        box.style.display = 'block';
+        window.scrollTo({ top: 0, behavior: 'smooth' });
       }
 
-      btn.innerHTML = '<span class="spinner"></span> Saving Credentials...';
-      btn.disabled = true;
-
-      try {
-        const res = await fetch('/api/settings', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            api_id: apiId,
-            api_hash: apiHash,
-            bot_token: botToken,
-            login_mode: 'bot',
-            session_string: '',
-            tmdb_api_key: tmdbKey
-          })
-        });
-
-        const data = await res.json();
-        if (res.ok && data.success) {
-          showToast('✓ Credentials saved successfully!', 'success');
-          showAlert('✓ Credentials saved successfully! You can now configure Downloader and Stremio sections independently.', 'success');
-          // Re-verify silently to keep status updated
-          verifyTelegram(true);
-          if (tmdbKey) verifyTmdb(true);
-        } else {
-          showToast(data.detail || data.message || 'Failed saving credentials.', 'error');
-          showAlert(data.detail || data.message || 'Failed saving credentials.', 'error');
-        }
-      } catch (err) {
-        showToast('Network error while saving settings: ' + err.message, 'error');
-        showAlert('Network error while saving settings: ' + err.message, 'error');
-      } finally {
-        btn.innerHTML = '💾 Save Credentials';
-        btn.disabled = false;
-      }
-    }
-
-    // --- Modal & Reset System ---
-    function openResetModal() {
-      document.getElementById('resetModal').style.display = 'flex';
-    }
-    function closeResetModal() {
-      document.getElementById('resetModal').style.display = 'none';
-    }
-
-    async function performReset() {
-      closeResetModal();
-      showToast('Wiping system data...', 'info');
-      try {
-        const res = await fetch('/api/system/reset', { method: 'POST' });
-        const data = await res.json();
-        if (data.success) {
-          showToast('✓ System wiped clean successfully!', 'success');
-          showAlert('System wiped clean successfully! All library and queue records are cleared.', 'success');
-          setTimeout(() => location.reload(), 1500);
-        } else {
-          showToast('Reset error: ' + (data.message || 'unknown'), 'error');
-          showAlert('Reset error: ' + (data.message || 'unknown'), 'error');
-        }
-      } catch (err) {
-        showToast('Network error performing reset: ' + err.message, 'error');
-        showAlert('Network error performing reset: ' + err.message, 'error');
-      }
-    }
-
-    function showAlert(msg, type) {
-      const box = document.getElementById('statusAlert');
-      box.className = `alert alert-${type}`;
-      box.innerText = msg;
-      box.style.display = 'block';
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-    }
-
-    document.addEventListener('DOMContentLoaded', loadCurrentConfig);
-  </script>
-</body>
+      document.addEventListener('DOMContentLoaded', loadCurrentConfig);
+    </script>
+  </body>
 </html>

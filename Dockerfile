@@ -21,8 +21,8 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel \
 # Copy application source
 COPY . .
 
-# Create directories for persistent data and media library
-RUN mkdir -p /app/data /media
+# Create directories for persistent data
+RUN mkdir -p /app/data
 
 EXPOSE 7000
 

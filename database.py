@@ -8,30 +8,34 @@ DB_FILE = os.path.join(DATA_DIR, "library.db")
 def parse_stremio_id(item_id: str):
     """
     Safely parses Stremio ID formats:
-      - 'tt1234567' -> (is_imdb=True, id_val='tt1234567', season=None, episode=None)
-      - 'tt1234567:1:2' -> (is_imdb=True, id_val='tt1234567', season=1, episode=2)
-      - 'tmdb:1032906' -> (is_imdb=False, id_val=1032906, season=None, episode=None)
-      - 'tmdb:1032906:1:2' -> (is_imdb=False, id_val=1032906, season=1, episode=2)
+      - 'stash_12345' / 'stash:12345' -> ("stash", 'stash_12345', None, None)
+      - 'tt1234567' -> ("imdb", 'tt1234567', None, None)
+      - 'tt1234567:1:2' -> ("imdb", 'tt1234567', 1, 2)
+      - 'tmdb:1032906' -> ("tmdb", 1032906, None, None)
+      - 'tmdb:1032906:1:2' -> ("tmdb", 1032906, 1, 2)
     """
-    if item_id.startswith("tmdb:"):
+    if item_id.startswith("stash_") or item_id.startswith("stash:"):
+        clean_id = item_id.replace("stash:", "stash_")
+        return "stash", clean_id, None, None
+    elif item_id.startswith("tmdb:"):
         rest = item_id[5:]
         parts = rest.split(":")
         tmdb_id = int(parts[0]) if parts[0].isdigit() else 0
         season = int(parts[1]) if len(parts) >= 2 and parts[1].isdigit() else None
         episode = int(parts[2]) if len(parts) >= 3 and parts[2].isdigit() else None
-        return False, tmdb_id, season, episode
+        return "tmdb", tmdb_id, season, episode
     elif item_id.startswith("tt"):
         parts = item_id.split(":")
         imdb_id = parts[0]
         season = int(parts[1]) if len(parts) >= 2 and parts[1].isdigit() else None
         episode = int(parts[2]) if len(parts) >= 3 and parts[2].isdigit() else None
-        return True, imdb_id, season, episode
+        return "imdb", imdb_id, season, episode
     else:
         parts = item_id.split(":")
         val = int(parts[0]) if parts[0].isdigit() else 0
         season = int(parts[1]) if len(parts) >= 2 and parts[1].isdigit() else None
         episode = int(parts[2]) if len(parts) >= 3 and parts[2].isdigit() else None
-        return False, val, season, episode
+        return "tmdb", val, season, episode
 
 async def init_db():
     async with aiosqlite.connect(DB_FILE) as db:
@@ -78,7 +82,8 @@ async def init_db():
             "subtitles TEXT",
             "duration INTEGER",
             "stream_badge TEXT",
-            "stream_desc TEXT"
+            "stream_desc TEXT",
+            "stash_id TEXT"
         ]:
             try:
                 await db.execute(f"ALTER TABLE videos ADD COLUMN {col_def}")
@@ -87,6 +92,7 @@ async def init_db():
 
         await db.execute("CREATE INDEX IF NOT EXISTS idx_imdb_id ON videos(imdb_id)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_tmdb_id ON videos(tmdb_id)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_stash_id ON videos(stash_id)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_media_type ON videos(media_type)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_file_lookup ON videos(file_name, file_size)")
         await db.commit()
@@ -97,14 +103,36 @@ async def upsert_video(
     file_name: str,
     file_size: int,
     mime_type: str,
-    tmdb_info: dict,
+    tmdb_info: dict | None = None,
     specs: dict | None = None,
     stream_badge: str | None = None,
-    stream_desc: str | None = None
+    stream_desc: str | None = None,
+    stash_info: dict | None = None
 ):
     now = int(time.time())
     specs = specs or {}
+    tmdb_info = tmdb_info or {}
     langs_str = ", ".join(specs.get("languages", [])) if isinstance(specs.get("languages"), list) else (specs.get("languages") or "")
+
+    is_adult = bool(stash_info or tmdb_info.get("media_type") == "porn" or tmdb_info.get("stash_id"))
+    active_info = stash_info if stash_info else tmdb_info
+
+    media_type = "porn" if is_adult else active_info.get("media_type", "movie")
+    stash_id = active_info.get("stash_id") or active_info.get("id") if is_adult else active_info.get("stash_id")
+    tmdb_id = active_info.get("tmdb_id") if not is_adult else None
+    imdb_id = active_info.get("imdb_id") if not is_adult else None
+    title = active_info.get("title", file_name)
+    episode_title = active_info.get("episode_title") if not is_adult else None
+    year = active_info.get("year")
+    season = active_info.get("season") if not is_adult else None
+    episode = active_info.get("episode") if not is_adult else None
+    poster = active_info.get("poster")
+    backdrop = active_info.get("backdrop")
+    overview = active_info.get("overview", "")
+    rating = active_info.get("rating", 0.0)
+    genres_raw = active_info.get("genres", [])
+    genres = ",".join(genres_raw) if isinstance(genres_raw, list) else (genres_raw or "")
+    duration = specs.get("duration") or active_info.get("duration")
 
     async with aiosqlite.connect(DB_FILE) as db:
         # Deduplicate exact duplicate forwarded messages (same file name and byte size forwarded again)
@@ -125,17 +153,18 @@ async def upsert_video(
         await db.execute("""
             INSERT INTO videos (
                 chat_id, message_id, file_name, file_size, mime_type,
-                tmdb_id, imdb_id, media_type, title, episode_title, year, season, episode,
+                tmdb_id, imdb_id, stash_id, media_type, title, episode_title, year, season, episode,
                 poster, backdrop, overview, rating, genres, indexed_at,
                 resolution, codec, audio, languages, subtitles, duration,
                 stream_badge, stream_desc
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(chat_id, message_id) DO UPDATE SET
                 file_name = excluded.file_name,
                 file_size = excluded.file_size,
                 mime_type = excluded.mime_type,
                 tmdb_id = excluded.tmdb_id,
                 imdb_id = excluded.imdb_id,
+                stash_id = excluded.stash_id,
                 media_type = excluded.media_type,
                 title = excluded.title,
                 episode_title = excluded.episode_title,
@@ -162,26 +191,27 @@ async def upsert_video(
             file_name,
             file_size,
             mime_type,
-            tmdb_info.get("tmdb_id"),
-            tmdb_info.get("imdb_id"),
-            tmdb_info.get("media_type", "movie"),
-            tmdb_info.get("title", file_name),
-            tmdb_info.get("episode_title"),
-            tmdb_info.get("year"),
-            tmdb_info.get("season"),
-            tmdb_info.get("episode"),
-            tmdb_info.get("poster"),
-            tmdb_info.get("backdrop"),
-            tmdb_info.get("overview", ""),
-            tmdb_info.get("rating", 0.0),
-            ",".join(tmdb_info.get("genres", [])),
+            tmdb_id,
+            imdb_id,
+            stash_id,
+            media_type,
+            title,
+            episode_title,
+            year,
+            season,
+            episode,
+            poster,
+            backdrop,
+            overview,
+            rating,
+            genres,
             now,
             specs.get("resolution"),
             specs.get("codec"),
             specs.get("audio"),
             langs_str,
             specs.get("subtitles"),
-            specs.get("duration"),
+            duration,
             stream_badge,
             stream_desc
         ))
@@ -190,13 +220,19 @@ async def upsert_video(
 async def get_catalog_items(media_type: str = "movie", limit: int = 100, skip: int = 0) -> list[dict]:
     """
     Returns grouped list of titles for the Stremio catalog row.
-    Strictly isolated: Series will only appear in tg_series, Movies only in tg_movies.
+    Strictly isolated: Series will only appear in tg_series, Movies only in tg_movies, Adult in tg_adult.
     """
     async with aiosqlite.connect(DB_FILE) as db:
         db.row_factory = aiosqlite.Row
         query = """
             SELECT 
-                COALESCE(imdb_id, 'tmdb:' || tmdb_id) as stremio_id,
+                CASE 
+                    WHEN stash_id IS NOT NULL AND stash_id != '' THEN 
+                        (CASE WHEN stash_id LIKE 'stash_%' THEN stash_id ELSE 'stash_' || stash_id END)
+                    WHEN imdb_id IS NOT NULL AND imdb_id != '' THEN imdb_id
+                    WHEN tmdb_id IS NOT NULL THEN 'tmdb:' || tmdb_id
+                    ELSE 'vid_' || id
+                END as stremio_id,
                 media_type,
                 title,
                 year,
@@ -208,7 +244,7 @@ async def get_catalog_items(media_type: str = "movie", limit: int = 100, skip: i
                 MAX(indexed_at) as latest_add
             FROM videos 
             WHERE media_type = ?
-            GROUP BY COALESCE(imdb_id, 'tmdb:' || tmdb_id)
+            GROUP BY stremio_id
             ORDER BY latest_add DESC
             LIMIT ? OFFSET ?
         """
@@ -218,17 +254,26 @@ async def get_catalog_items(media_type: str = "movie", limit: int = 100, skip: i
 
 async def get_meta_by_id(item_id: str, media_type: str) -> dict | None:
     """
-    Fetches rich metadata for an item. Handles 'tt1234567' or 'tmdb:12345'.
+    Fetches rich metadata for an item. Handles 'tt1234567', 'tmdb:12345', or 'stash_12345'.
     For series, orders and attaches available library episodes without duplicates.
     """
     async with aiosqlite.connect(DB_FILE) as db:
         db.row_factory = aiosqlite.Row
         
-        is_imdb, id_val, season, episode = parse_stremio_id(item_id)
-        condition = "imdb_id = ?" if is_imdb else "tmdb_id = ?"
+        id_type, id_val, season, episode = parse_stremio_id(item_id)
 
-        query = f"SELECT * FROM videos WHERE {condition} AND media_type = ? ORDER BY id DESC LIMIT 1"
-        async with db.execute(query, (id_val, media_type)) as cursor:
+        if id_type == "stash" or media_type == "porn":
+            raw_uuid = str(id_val).replace("stash_", "")
+            query = "SELECT * FROM videos WHERE (stash_id = ? OR stash_id = ?) AND media_type = 'porn' ORDER BY id DESC LIMIT 1"
+            params = (str(id_val), raw_uuid)
+        elif id_type == "imdb":
+            query = f"SELECT * FROM videos WHERE imdb_id = ? AND media_type = ? ORDER BY id DESC LIMIT 1"
+            params = (id_val, media_type)
+        else:
+            query = f"SELECT * FROM videos WHERE tmdb_id = ? AND media_type = ? ORDER BY id DESC LIMIT 1"
+            params = (id_val, media_type)
+
+        async with db.execute(query, params) as cursor:
             row = await cursor.fetchone()
             if not row:
                 return None
@@ -236,6 +281,7 @@ async def get_meta_by_id(item_id: str, media_type: str) -> dict | None:
             
             # If it's a TV series, attach distinct episodes in the library
             if media_type == "series":
+                condition = "imdb_id = ?" if id_type == "imdb" else "tmdb_id = ?"
                 ep_query = f"""
                     SELECT season, episode, title, episode_title, overview 
                     FROM videos 
@@ -267,15 +313,24 @@ async def get_streams_by_id(item_id: str, media_type: str) -> list[dict]:
     Handles:
       - Movie: 'tt1234567' or 'tmdb:12345'
       - Series: 'tt1234567:1:2' or 'tmdb:12345:1:2'
+      - Adult / StashDB: 'stash_12345'
     Deduplicates identical forwarded messages while preserving distinct releases/qualities.
     """
     async with aiosqlite.connect(DB_FILE) as db:
         db.row_factory = aiosqlite.Row
         
-        is_imdb, id_val, season, episode = parse_stremio_id(item_id)
-        condition = "imdb_id = ?" if is_imdb else "tmdb_id = ?"
+        id_type, id_val, season, episode = parse_stremio_id(item_id)
 
-        if media_type == "series" and season is not None and episode is not None:
+        if id_type == "stash" or media_type == "porn":
+            raw_uuid = str(id_val).replace("stash_", "")
+            query = """
+                SELECT * FROM videos 
+                WHERE (stash_id = ? OR stash_id = ? OR stash_id = ?) AND media_type = 'porn'
+                ORDER BY file_size DESC
+            """
+            params = (str(item_id), f"stash_{raw_uuid}", raw_uuid)
+        elif media_type == "series" and season is not None and episode is not None:
+            condition = "imdb_id = ?" if id_type == "imdb" else "tmdb_id = ?"
             query = f"""
                 SELECT * FROM videos 
                 WHERE {condition} AND media_type = 'series' AND season = ? AND episode = ?
@@ -283,6 +338,7 @@ async def get_streams_by_id(item_id: str, media_type: str) -> list[dict]:
             """
             params = (id_val, season, episode)
         else:
+            condition = "imdb_id = ?" if id_type == "imdb" else "tmdb_id = ?"
             query = f"""
                 SELECT * FROM videos 
                 WHERE {condition} AND media_type = 'movie'
@@ -301,6 +357,39 @@ async def get_streams_by_id(item_id: str, media_type: str) -> list[dict]:
                     continue
                 seen_signatures.add(sig)
                 unique_videos.append(v)
+
+            # Auto-healing fallback for StashDB scenes:
+            # If not matched directly by UUID, resolve scene title via StashDB and match by filename/title
+            if not unique_videos and (id_type == "stash" or media_type == "porn"):
+                try:
+                    from stashdb import get_stashdb_scene_by_id
+                    scene_meta = await get_stashdb_scene_by_id(raw_uuid)
+                    if scene_meta and scene_meta.get("title"):
+                        s_title = scene_meta["title"].strip()
+                        query_fallback = """
+                            SELECT * FROM videos 
+                            WHERE media_type = 'porn' 
+                              AND (LOWER(title) = LOWER(?) OR LOWER(file_name) LIKE LOWER(?))
+                            ORDER BY file_size DESC
+                        """
+                        async with db.execute(query_fallback, (s_title, f"%{s_title}%")) as fallback_cur:
+                            fb_rows = await fallback_cur.fetchall()
+                            for r in fb_rows:
+                                v = dict(r)
+                                sig = (v["file_name"], v["file_size"])
+                                if sig not in seen_signatures:
+                                    seen_signatures.add(sig)
+                                    unique_videos.append(v)
+                            if fb_rows:
+                                await db.execute("""
+                                    UPDATE videos SET stash_id = ? 
+                                    WHERE media_type = 'porn' 
+                                      AND (LOWER(title) = LOWER(?) OR LOWER(file_name) LIKE LOWER(?))
+                                """, (f"stash_{raw_uuid}", s_title, f"%{s_title}%"))
+                                await db.commit()
+                except Exception as fb_err:
+                    print(f"[Notice] Stash on-demand stream resolution note: {fb_err}")
+
             return unique_videos
 
 async def get_video_by_location(chat_id: int, message_id: int) -> dict | None:
@@ -318,7 +407,14 @@ async def get_library_stats() -> dict:
             movies = (await c2.fetchone())[0]
         async with db.execute("SELECT COUNT(*) FROM videos WHERE media_type = 'series'") as c3:
             series = (await c3.fetchone())[0]
-        return {"total_videos": total, "movies": movies, "series_episodes": series}
+        async with db.execute("SELECT COUNT(*) FROM videos WHERE media_type = 'porn'") as c4:
+            porn = (await c4.fetchone())[0]
+        return {
+            "total_videos": total,
+            "movies": movies,
+            "series_episodes": series,
+            "adult_videos": porn
+        }
 
 async def clear_library_database():
     """Wipes indexed videos to allow a clean re-scan."""
@@ -327,12 +423,10 @@ async def clear_library_database():
         await db.commit()
 
 async def reset_all_data():
-    """Wipes all library videos and downloader queue/checkpoints for a clean fresh start."""
+    """Wipes all library videos for a clean fresh start."""
     async with aiosqlite.connect(DB_FILE) as db:
         await db.execute("DELETE FROM videos")
         try:
-            await db.execute("DELETE FROM download_queue")
-            await db.execute("DELETE FROM download_checkpoints")
             await db.execute("DELETE FROM sqlite_sequence")
         except Exception:
             pass

@@ -8,7 +8,7 @@ from fastapi.responses import StreamingResponse, JSONResponse, HTMLResponse, Red
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from config import PUBLIC_URL, SERVER_HOST, SERVER_PORT
+from config import PUBLIC_URL, SERVER_HOST, SERVER_PORT, ADULT_ONLY
 from database import (
     init_db,
     get_catalog_items,
@@ -39,11 +39,6 @@ async def lifespan(app: FastAPI):
     print(f"  ⚙️ Configuration Web UI: {PUBLIC_URL}/configure")
     print("=" * 60)
     await init_db()
-    try:
-        from downloader.database import init_downloader_db
-        await init_downloader_db()
-    except Exception as dbe:
-        print(f"[Warning] Downloader DB init notice: {dbe}")
 
     # If already configured from previous run, connect Telegram service
     if is_configured():
@@ -87,7 +82,8 @@ async def settings_page():
     html_file = os.path.join(TEMPLATES_DIR, "settings.html")
     if os.path.exists(html_file):
         with open(html_file, "r", encoding="utf-8") as f:
-            return HTMLResponse(content=f.read())
+            content = f.read().replace("__ADULT_ONLY__", "true" if ADULT_ONLY else "false")
+            return HTMLResponse(content=content)
     return HTMLResponse("<h1>Settings template missing</h1>", status_code=500)
 
 @app.get("/configure", response_class=HTMLResponse)
@@ -100,7 +96,8 @@ async def stremio_page():
     html_file = os.path.join(TEMPLATES_DIR, "stremio.html")
     if os.path.exists(html_file):
         with open(html_file, "r", encoding="utf-8") as f:
-            return HTMLResponse(content=f.read())
+            content = f.read().replace("__ADULT_ONLY__", "true" if ADULT_ONLY else "false")
+            return HTMLResponse(content=content)
     return HTMLResponse("<h1>Stremio template missing</h1>", status_code=500)
 
 @app.get("/api/config")
@@ -108,44 +105,52 @@ async def get_config_api():
     s = load_settings()
     return {
         "configured": s.get("configured", False),
-        "api_id": s.get("api_id"),
-        "api_hash": s.get("api_hash", ""),
+        "adult_only": ADULT_ONLY,
         "bot_token": s.get("bot_token", ""),
         "login_mode": s.get("login_mode", "bot"),
         "session_string": s.get("session_string", ""),
         "tmdb_api_key": s.get("tmdb_api_key", ""),
+        "stashdb_api_key": s.get("stashdb_api_key", ""),
         "channel_ids": s.get("channel_ids", []),
-        "download_channel_ids": s.get("download_channel_ids", []),
-        "downloader_enabled": s.get("downloader_enabled", False),
-        "media_dir": s.get("media_dir", "/media"),
-        "min_free_disk_gb": s.get("min_free_disk_gb", 4.5),
         "public_url": PUBLIC_URL
     }
 
 class SaveSettingsRequest(BaseModel):
-    api_id: int
-    api_hash: str
+    api_id: int | None = None
+    api_hash: str | None = None
     bot_token: str | None = ""
     login_mode: str | None = "bot"
     session_string: str | None = ""
     tmdb_api_key: str | None = ""
+    stashdb_api_key: str | None = ""
 
 @app.post("/api/settings")
 async def save_settings_api(payload: SaveSettingsRequest):
-    if not payload.api_id or not payload.api_hash:
-        raise HTTPException(status_code=400, detail="Telegram API ID and API Hash are required.")
+    current = load_settings()
+    api_id = payload.api_id or current.get("api_id")
+    api_hash = (payload.api_hash or "").strip() or current.get("api_hash", "")
+
+    if not api_id or not api_hash:
+        raise HTTPException(
+            status_code=400,
+            detail="Telegram API ID and API Hash must be set in your .env file."
+        )
+
     if payload.login_mode == "user" and not (payload.session_string or "").strip():
         raise HTTPException(status_code=400, detail="Session string is required for user login mode.")
-    if payload.login_mode != "user" and not (payload.bot_token or "").strip():
+    if payload.login_mode != "user" and not ((payload.bot_token or "").strip() or current.get("bot_token", "")):
         raise HTTPException(status_code=400, detail="Bot token is required for bot login mode.")
 
+    bot_token = (payload.bot_token or "").strip() or current.get("bot_token", "")
+
     save_data = {
-        "api_id": payload.api_id,
-        "api_hash": payload.api_hash.strip(),
-        "bot_token": (payload.bot_token or "").strip(),
+        "api_id": int(api_id),
+        "api_hash": api_hash,
+        "bot_token": bot_token,
         "login_mode": payload.login_mode or "bot",
         "session_string": (payload.session_string or "").strip(),
-        "tmdb_api_key": (payload.tmdb_api_key or "").strip()
+        "tmdb_api_key": (payload.tmdb_api_key or "").strip(),
+        "stashdb_api_key": (payload.stashdb_api_key or "").strip()
     }
     save_settings(save_data)
     success = await start_telegram_service()
@@ -187,12 +192,6 @@ class StremioChannelsRequest(BaseModel):
 
 @app.post("/api/stremio/channels")
 async def save_stremio_channels_api(payload: StremioChannelsRequest):
-    current = load_settings()
-    dl_set = set(current.get("download_channel_ids", []))
-    conflicts = [cid for cid in payload.channel_ids if cid in dl_set]
-    if conflicts:
-        raise HTTPException(status_code=400, detail="Cannot select channels already configured for local downloading.")
-
     save_settings({"channel_ids": payload.channel_ids})
     await start_telegram_service()
     return {
@@ -280,30 +279,46 @@ async def verify_tmdb_api(payload: VerifyTmdbRequest):
     except Exception as e:
         return {"valid": False, "message": f"Network error contacting TMDB: {str(e)}"}
 
+class VerifyStashdbRequest(BaseModel):
+    api_key: str
+
+@app.post("/api/verify-stashdb")
+async def verify_stashdb_api(payload: VerifyStashdbRequest):
+    key = payload.api_key.strip()
+    if not key:
+        return {"valid": False, "message": "API Key cannot be empty."}
+    from stashdb import verify_stashdb_key
+    return await verify_stashdb_key(key)
+
 class SaveConfigRequest(BaseModel):
-    api_id: int
-    api_hash: str
+    api_id: int | None = None
+    api_hash: str | None = None
     bot_token: str
     tmdb_api_key: str | None = ""
+    stashdb_api_key: str | None = ""
     channel_ids: list[int] | None = None
-    download_channel_ids: list[int] | None = None
 
 @app.post("/api/save-config")
 async def save_config_api(payload: SaveConfigRequest):
-    if not payload.api_id or not payload.api_hash or not payload.bot_token:
-        raise HTTPException(status_code=400, detail="Missing required credentials.")
+    current = load_settings()
+    api_id = payload.api_id or current.get("api_id")
+    api_hash = (payload.api_hash or "").strip() or current.get("api_hash", "")
+    if not api_id or not api_hash or not payload.bot_token:
+        raise HTTPException(
+            status_code=400,
+            detail="Missing required credentials (Telegram API ID and Hash must be set in .env)."
+        )
 
     # Save to persistent settings.json
     save_data = {
-        "api_id": payload.api_id,
-        "api_hash": payload.api_hash.strip(),
+        "api_id": int(api_id),
+        "api_hash": api_hash,
         "bot_token": payload.bot_token.strip(),
-        "tmdb_api_key": (payload.tmdb_api_key or "").strip()
+        "tmdb_api_key": (payload.tmdb_api_key or "").strip(),
+        "stashdb_api_key": (payload.stashdb_api_key or "").strip()
     }
     if payload.channel_ids is not None:
         save_data["channel_ids"] = payload.channel_ids
-    if payload.download_channel_ids is not None:
-        save_data["download_channel_ids"] = payload.download_channel_ids
 
     save_settings(save_data)
 
@@ -325,14 +340,27 @@ async def save_config_api(payload: SaveConfigRequest):
 @app.get("/manifest.json")
 async def get_manifest():
     conf = is_configured()
-    return {
-        "id": "org.homelab.telegram.streams",
-        "version": "1.2.0",
-        "name": "Telegram Library TV",
-        "description": "Stream high-definition videos directly from your Telegram channels without buffering",
-        "resources": ["catalog", "meta", "stream"] if conf else [],
-        "types": ["movie", "series"],
-        "catalogs": [
+
+    types = []
+    id_prefixes = []
+    catalogs = []
+
+    if ADULT_ONLY:
+        types = ["porn"]
+        id_prefixes = ["stash_"]
+        catalogs = [
+            {
+                "type": "porn",
+                "id": "tg_adult",
+                "name": "Telegram Adult Vault",
+                "extra": [{"name": "skip", "isRequired": False}]
+            }
+        ]
+        addon_name = "Telegram Adult Vault"
+    else:
+        types = ["movie", "series"]
+        id_prefixes = ["tt", "tmdb:"]
+        catalogs = [
             {
                 "type": "movie",
                 "id": "tg_movies",
@@ -345,8 +373,25 @@ async def get_manifest():
                 "name": "Telegram Series",
                 "extra": [{"name": "skip", "isRequired": False}]
             }
-        ] if conf else [],
-        "idPrefixes": ["tt", "tmdb:"],
+        ]
+        addon_name = "Telegram Library TV"
+
+    resources = []
+    if conf:
+        if catalogs:
+            resources.append("catalog")
+        resources.append({"name": "meta", "types": types, "idPrefixes": id_prefixes})
+        resources.append({"name": "stream", "types": types, "idPrefixes": id_prefixes})
+
+    return {
+        "id": "org.homelab.telegram.streams",
+        "version": "1.3.0",
+        "name": addon_name,
+        "description": "Stream high-definition videos directly from your Telegram channels without buffering",
+        "resources": resources,
+        "types": types if conf else [],
+        "catalogs": catalogs if conf else [],
+        "idPrefixes": id_prefixes,
         "behaviorHints": {
             "configurable": True,
             "configurationRequired": not conf
@@ -359,8 +404,12 @@ async def get_manifest():
 
 @app.get("/poster/{media_type}/{title}.svg")
 async def get_poster_image(media_type: str, title: str):
-    from tmdb import generate_poster_svg
-    svg_data = generate_poster_svg(title, media_type)
+    if ADULT_ONLY or media_type == "porn":
+        from stashdb import generate_adult_poster_svg
+        svg_data = generate_adult_poster_svg(title)
+    else:
+        from tmdb import generate_poster_svg
+        svg_data = generate_poster_svg(title, media_type)
     return Response(
         content=svg_data,
         media_type="image/svg+xml",
@@ -382,7 +431,13 @@ async def get_catalog(media_type: str, catalog_id: str, extra: str | None = None
         except ValueError:
             skip = 0
 
-    target_type = "series" if media_type == "series" else "movie"
+    if ADULT_ONLY or media_type == "porn" or catalog_id == "tg_adult":
+        target_type = "porn"
+    elif media_type == "series" or catalog_id == "tg_series":
+        target_type = "series"
+    else:
+        target_type = "movie"
+
     items = await get_catalog_items(media_type=target_type, limit=100, skip=skip)
 
     metas = []
@@ -401,7 +456,13 @@ async def get_catalog(media_type: str, catalog_id: str, extra: str | None = None
 
 @app.get("/meta/{media_type}/{item_id}.json")
 async def get_meta(media_type: str, item_id: str):
-    target_type = "series" if media_type == "series" else "movie"
+    if ADULT_ONLY or media_type == "porn" or item_id.startswith("stash_") or item_id.startswith("stash:"):
+        target_type = "porn"
+    elif media_type == "series":
+        target_type = "series"
+    else:
+        target_type = "movie"
+
     item = await get_meta_by_id(item_id, target_type)
     if not item:
         raise HTTPException(status_code=404, detail="Item not found")
@@ -426,17 +487,33 @@ async def get_meta(media_type: str, item_id: str):
     return {"meta": meta_dict}
 
 @app.get("/stream/{media_type}/{item_id}.json")
-async def get_stream(media_type: str, item_id: str):
-    target_type = "series" if media_type == "series" else "movie"
+async def get_stream(media_type: str, item_id: str, request: Request):
+    if ADULT_ONLY or media_type == "porn" or item_id.startswith("stash_") or item_id.startswith("stash:"):
+        target_type = "porn"
+    elif media_type == "series":
+        target_type = "series"
+    else:
+        target_type = "movie"
+
     videos = await get_streams_by_id(item_id, target_type)
 
     if not videos:
         return {"streams": []}
 
+    # Dynamically determine the base URL so mobile devices on Wi-Fi/LAN can reach it!
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host")
+    if host and "127.0.0.1" not in host and "localhost" not in host:
+        proto = request.headers.get("x-forwarded-proto", request.url.scheme)
+        base_url = f"{proto}://{host}".rstrip("/")
+    elif PUBLIC_URL and "127.0.0.1" not in PUBLIC_URL and "localhost" not in PUBLIC_URL:
+        base_url = PUBLIC_URL.rstrip("/")
+    else:
+        base_url = f"http://192.168.1.16:{SERVER_PORT}"
+
     streams = []
     for v in videos:
         safe_name = quote(v["file_name"])
-        play_url = f"{PUBLIC_URL}/play/{v['chat_id']}/{v['message_id']}/{safe_name}"
+        play_url = f"{base_url}/play/{v['chat_id']}/{v['message_id']}/{safe_name}"
 
         badge = v.get("stream_badge") or f"[Telegram ⚡] {v.get('resolution') or 'HD'}"
         desc = v.get("stream_desc")
@@ -452,6 +529,18 @@ async def get_stream(media_type: str, item_id: str):
 
     return {"streams": streams}
 
+# OPTIONS pre-flight handler for mobile players (ExoPlayer / VLC / Stremio Mobile)
+@app.options("/play/{chat_id}/{message_id}/{filename}")
+async def options_stream(chat_id: int, message_id: int, filename: str):
+    headers = {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+        "Access-Control-Allow-Headers": "*",
+        "Access-Control-Expose-Headers": "Content-Range, Content-Length, Accept-Ranges",
+        "Access-Control-Max-Age": "86400",
+    }
+    return Response(status_code=200, headers=headers)
+
 # HEAD probe endpoint for players checking file size & range support
 @app.head("/play/{chat_id}/{message_id}/{filename}")
 async def probe_stream(chat_id: int, message_id: int, filename: str):
@@ -460,9 +549,13 @@ async def probe_stream(chat_id: int, message_id: int, filename: str):
         raise HTTPException(status_code=404, detail="Video not found")
 
     headers = {
-        "Content-Type": video["mime_type"],
+        "Content-Type": video["mime_type"] or "video/mp4",
         "Content-Length": str(video["file_size"]),
         "Accept-Ranges": "bytes",
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+        "Access-Control-Allow-Headers": "*",
+        "Access-Control-Expose-Headers": "Content-Range, Content-Length, Accept-Ranges",
     }
     return Response(status_code=200, headers=headers)
 
@@ -487,9 +580,13 @@ async def play_stream(chat_id: int, message_id: int, filename: str, request: Req
 
     if not range_header:
         headers = {
-            "Content-Type": video["mime_type"],
+            "Content-Type": video["mime_type"] or "video/mp4",
             "Content-Length": str(file_size),
             "Accept-Ranges": "bytes",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+            "Access-Control-Allow-Headers": "*",
+            "Access-Control-Expose-Headers": "Content-Range, Content-Length, Accept-Ranges",
         }
         return StreamingResponse(
             stream_telegram_file(chat_id, message_id, 0, file_size),
@@ -549,7 +646,12 @@ async def play_stream(chat_id: int, message_id: int, filename: str, request: Req
         "Content-Range": f"bytes {start}-{end}/{file_size}",
         "Accept-Ranges": "bytes",
         "Content-Length": str(content_length),
-        "Content-Type": video["mime_type"],
+        "Content-Type": video["mime_type"] or "video/mp4",
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+        "Access-Control-Allow-Headers": "*",
+        "Access-Control-Expose-Headers": "Content-Range, Content-Length, Accept-Ranges",
+        "Connection": "keep-alive"
     }
 
     return StreamingResponse(
@@ -574,353 +676,6 @@ async def get_streaming_stats_api():
 async def trigger_rescan():
     asyncio.create_task(clear_and_rescan())
     return {"status": "Library wipe and fresh channel rescan initiated in background"}
-
-# ---------------------------------------------------------------------
-# Downloader & Local Archive Endpoints
-# ---------------------------------------------------------------------
-
-class DownloaderConfigRequest(BaseModel):
-    downloader_enabled: bool | None = None
-    download_channel_ids: list[int] | None = None
-    media_dir: str | None = None
-    min_free_disk_gb: float | None = None
-    max_concurrent_downloads: int | None = None
-    auto_tmdb_identify: bool | None = None
-    auto_organize: bool | None = None
-    max_retries: int | None = None
-    startup_recovery: bool | None = None
-    history_reconciliation: bool | None = None
-    reconciliation_interval_min: int | None = None
-    notifications_enabled: bool | None = None
-    notification_mode: str | None = None
-    notification_chat_id: int | None = None
-
-class MetadataOverrideRequest(BaseModel):
-    media_type: str | None = None
-    title: str | None = None
-    year: int | None = None
-    season: int | None = None
-    episode: int | None = None
-    episode_title: str | None = None
-    tmdb_id: int | None = None
-
-@app.get("/downloads", response_class=HTMLResponse)
-async def downloads_dashboard_page():
-    html_file = os.path.join(TEMPLATES_DIR, "downloader.html")
-    if not os.path.exists(html_file):
-        html_file = os.path.join(TEMPLATES_DIR, "dashboard.html")
-    if os.path.exists(html_file):
-        with open(html_file, "r", encoding="utf-8") as f:
-            return HTMLResponse(content=f.read())
-    return HTMLResponse("<h1>Downloader template missing</h1>", status_code=500)
-
-@app.get("/api/downloader/config")
-async def get_downloader_config():
-    s = load_settings()
-    return {
-        "downloader_enabled": s.get("downloader_enabled", True),
-        "download_channel_ids": s.get("download_channel_ids", []),
-        "media_dir": s.get("media_dir"),
-        "min_free_disk_gb": s.get("min_free_disk_gb", 5.0),
-        "max_concurrent_downloads": s.get("max_concurrent_downloads", 1),
-        "auto_tmdb_identify": s.get("auto_tmdb_identify", True),
-        "auto_organize": s.get("auto_organize", True),
-        "max_retries": s.get("max_retries", 5),
-        "startup_recovery": s.get("startup_recovery", True),
-        "history_reconciliation": s.get("history_reconciliation", True),
-        "reconciliation_interval_min": s.get("reconciliation_interval_min", 30),
-        "notifications_enabled": s.get("notifications_enabled", True),
-        "notification_mode": s.get("notification_mode", "reply"),
-        "notification_chat_id": s.get("notification_chat_id")
-    }
-
-@app.post("/api/downloader/config")
-async def save_downloader_config(payload: DownloaderConfigRequest):
-    update_data = {}
-    for k, v in payload.model_dump().items():
-        if v is not None:
-            update_data[k] = v
-
-    saved = save_settings(update_data)
-
-    from telegram_client import get_client, start_telegram_service
-    from downloader.service import (
-        start_downloader_service,
-        stop_downloader_service,
-        get_downloader_worker,
-        update_monitored_download_channels,
-        reconcile_download_channels
-    )
-
-    client = get_client()
-    dl_enabled = saved.get("downloader_enabled", False)
-    dl_channels = saved.get("download_channel_ids", [])
-
-    if dl_enabled and dl_channels:
-        # Automatically unpause any PAUSED_DISK jobs so they get re-evaluated under updated settings
-        try:
-            import aiosqlite
-            from downloader.database import DB_FILE, recalculate_queue_positions_internal
-            async with aiosqlite.connect(DB_FILE) as db:
-                await db.execute("""
-                    UPDATE download_queue
-                    SET status = 'QUEUED', next_retry_at = NULL, last_error = NULL
-                    WHERE status = 'PAUSED_DISK'
-                """)
-                await db.commit()
-                await recalculate_queue_positions_internal(db)
-        except Exception as e:
-            print(f"[Config Save Warning] Error unpausing disk-paused jobs: {e}")
-
-        worker = get_downloader_worker()
-        if not worker or not worker.is_running:
-            if not client or not client.is_connected():
-                await start_telegram_service()
-                client = get_client()
-            if client and client.is_connected():
-                await start_downloader_service(client)
-        else:
-            update_monitored_download_channels(dl_channels)
-            asyncio.create_task(reconcile_download_channels())
-            worker.wake()
-    else:
-        await stop_downloader_service()
-
-    return {"success": True, "settings": saved}
-
-@app.get("/api/downloader/stats")
-async def get_downloader_stats_api():
-    from downloader.database import get_downloader_stats
-    from downloader.service import get_downloader_worker
-    import shutil
-
-    s = load_settings()
-    media_dir = s.get("media_dir") or os.path.join(s.get("data_dir", "data"), "media")
-    os.makedirs(media_dir, exist_ok=True)
-
-    counts = await get_downloader_stats()
-
-    # Disk usage
-    disk_info = None
-    try:
-        usage = shutil.disk_usage(media_dir)
-        total_gb = round(usage.total / (1024 ** 3), 2)
-        free_gb = round(usage.free / (1024 ** 3), 2)
-        used_gb = round((usage.total - usage.free) / (1024 ** 3), 2)
-        pct = round((usage.total - usage.free) / usage.total * 100, 1) if usage.total > 0 else 0
-        disk_info = {
-            "total_gb": total_gb,
-            "free_gb": free_gb,
-            "used_gb": used_gb,
-            "used_percent": pct
-        }
-    except Exception as e:
-        print(f"[Stats Warning] Disk check: {e}")
-
-    # Active job / transfer
-    worker = get_downloader_worker()
-    active_transfer = worker.get_active_transfer() if worker else None
-
-    return {
-        "counts": counts,
-        "disk": disk_info,
-        "active_transfer": active_transfer,
-        "active_job": active_transfer
-    }
-
-@app.get("/api/downloader/queue")
-async def get_downloader_queue_api():
-    from downloader.database import get_all_jobs
-    from downloader.models import DownloadStatus
-    from downloader.service import get_downloader_worker
-
-    active_statuses = (
-        DownloadStatus.DOWNLOADING.value,
-        DownloadStatus.VALIDATING.value,
-        DownloadStatus.QUEUED.value,
-        DownloadStatus.PAUSED_NETWORK.value,
-        DownloadStatus.PAUSED_DISK.value,
-        DownloadStatus.VERIFYING.value,
-        DownloadStatus.IDENTIFYING.value,
-        DownloadStatus.ORGANIZING.value,
-        DownloadStatus.RETRY_PENDING.value,
-    )
-    all_jobs = await get_all_jobs(limit=200)
-    worker = get_downloader_worker()
-    active_transfer = worker.get_active_transfer() if worker else None
-
-    queue_jobs = []
-    for j in all_jobs:
-        if j.status in active_statuses:
-            d = j.to_dict()
-            if active_transfer and (active_transfer.get("job_id") == j.id or active_transfer.get("id") == j.id):
-                d["bytes_downloaded"] = active_transfer.get("bytes_downloaded", d.get("bytes_downloaded", 0))
-                d["downloaded_bytes"] = d["bytes_downloaded"]
-                d["download_speed"] = active_transfer.get("download_speed", 0.0)
-                d["speed_bytes_sec"] = d["download_speed"]
-                d["progress_pct"] = active_transfer.get("progress_pct", 0.0)
-                d["eta_seconds"] = active_transfer.get("eta_seconds", 0)
-                d["status"] = active_transfer.get("status", d.get("status"))
-            else:
-                dl_bytes = d.get("bytes_downloaded", 0)
-                fsize = d.get("file_size", 1) or 1
-                pct = round((dl_bytes / fsize) * 100, 1)
-                d["downloaded_bytes"] = dl_bytes
-                d["speed_bytes_sec"] = d.get("download_speed", 0.0)
-                d["progress_pct"] = pct
-                d["eta_seconds"] = 0
-            queue_jobs.append(d)
-
-    return {"jobs": queue_jobs}
-
-@app.get("/api/downloader/history")
-async def get_downloader_history_api():
-    from downloader.database import get_all_jobs
-    from downloader.models import DownloadStatus
-
-    history_statuses = (
-        DownloadStatus.COMPLETED.value,
-        DownloadStatus.FAILED.value,
-        DownloadStatus.SOURCE_DELETED.value,
-        DownloadStatus.SKIPPED.value,
-    )
-    all_jobs = await get_all_jobs(limit=200)
-    history_jobs = [j.to_dict() for j in all_jobs if j.status in history_statuses]
-    return {"jobs": history_jobs, "history": history_jobs}
-
-@app.post("/api/downloader/job/{job_id}/pause")
-async def pause_download_job_api(job_id: int):
-    from downloader.database import pause_job
-    from downloader.service import get_downloader_worker
-    worker = get_downloader_worker()
-    if worker and worker.engine:
-        if worker.get_active_job() and worker.get_active_job().id == job_id:
-            worker.engine.cancel_active_download()
-    await pause_job(job_id)
-    return {"success": True}
-
-@app.post("/api/downloader/job/{job_id}/resume")
-async def resume_download_job_api(job_id: int):
-    from downloader.database import resume_job
-    from downloader.service import get_downloader_worker
-    await resume_job(job_id)
-    worker = get_downloader_worker()
-    if worker:
-        worker.wake()
-    return {"success": True}
-
-@app.post("/api/downloader/job/{job_id}/retry")
-async def retry_download_job_api(job_id: int):
-    from downloader.database import retry_job
-    from downloader.service import get_downloader_worker
-    await retry_job(job_id)
-    worker = get_downloader_worker()
-    if worker:
-        worker.wake()
-    return {"success": True}
-
-@app.post("/api/downloader/job/{job_id}/skip")
-async def skip_download_job_api(job_id: int):
-    from downloader.database import skip_job
-    from downloader.service import get_downloader_worker
-    worker = get_downloader_worker()
-    if worker and worker.engine:
-        if worker.get_active_job() and worker.get_active_job().id == job_id:
-            worker.engine.cancel_active_download()
-    await skip_job(job_id)
-    return {"success": True}
-
-@app.delete("/api/downloader/job/{job_id}")
-async def delete_download_job_api(job_id: int):
-    from downloader.database import delete_job
-    from downloader.service import get_downloader_worker
-    worker = get_downloader_worker()
-    if worker and worker.engine:
-        if worker.get_active_job() and worker.get_active_job().id == job_id:
-            worker.engine.cancel_active_download()
-    await delete_job(job_id)
-    return {"success": True}
-
-@app.post("/api/downloader/job/{job_id}/metadata")
-async def override_job_metadata_api(job_id: int, payload: MetadataOverrideRequest):
-    import json
-    from downloader.database import get_job_by_id, update_job_metadata
-    job = await get_job_by_id(job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
-
-    existing_meta = {}
-    if job.metadata_json:
-        try:
-            existing_meta = json.loads(job.metadata_json)
-        except Exception:
-            pass
-
-    for k, v in payload.model_dump().items():
-        if v is not None:
-            existing_meta[k] = v
-
-    await update_job_metadata(
-        job_id=job_id,
-        media_type=existing_meta.get("media_type") or job.media_type,
-        identified_title=existing_meta.get("title") or job.identified_title,
-        identified_year=existing_meta.get("year") or job.identified_year,
-        identified_season=existing_meta.get("season") or job.identified_season,
-        identified_episode=existing_meta.get("episode") or job.identified_episode,
-        identified_episode_title=existing_meta.get("episode_title") or job.identified_episode_title,
-        tmdb_id=existing_meta.get("tmdb_id") or job.tmdb_id,
-        imdb_id=existing_meta.get("imdb_id") or job.imdb_id,
-        metadata_json=json.dumps(existing_meta)
-    )
-    return {"success": True}
-
-@app.post("/api/downloader/job/{job_id}/reidentify")
-async def reidentify_job_metadata_api(job_id: int):
-    from downloader.database import get_job_by_id
-    from downloader.organizer import MediaOrganizer
-    job = await get_job_by_id(job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
-
-    s = load_settings()
-    media_dir = s.get("media_dir") or os.path.join(s.get("data_dir", "data"), "media")
-    organizer = MediaOrganizer(media_dir)
-    meta = await organizer.identify_metadata(job, auto_tmdb=True)
-    return {"success": True, "metadata": meta}
-
-@app.post("/api/downloader/reconcile")
-async def trigger_downloader_reconcile_api():
-    s = load_settings()
-    if not s.get("bot_token"):
-        return {
-            "success": False,
-            "discovered": 0,
-            "status": "Telegram Bot Token is not configured. Please set your credentials in Settings first."
-        }
-    if not s.get("download_channel_ids"):
-        return {
-            "success": False,
-            "discovered": 0,
-            "status": "No download channels configured. Please select at least one channel in Downloader Settings."
-        }
-
-    from telegram_client import get_client, start_telegram_service
-    from downloader.service import (
-        start_downloader_service,
-        get_downloader_worker,
-        reconcile_download_channels
-    )
-    client = get_client()
-    if not client or not client.is_connected():
-        await start_telegram_service()
-        client = get_client()
-    worker = get_downloader_worker()
-    if not worker or not worker.is_running:
-        if client and client.is_connected():
-            await start_downloader_service(client)
-
-    discovered = await reconcile_download_channels()
-    return {"success": True, "discovered": discovered, "status": f"Discovered and enqueued {discovered} media post(s)."}
 
 if __name__ == "__main__":
     import uvicorn
