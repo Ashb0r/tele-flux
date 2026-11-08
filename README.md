@@ -1,4 +1,4 @@
-# ⚡ Teleflux & Teleflux Red
+# ⚡ Teleflux
 
 <div align="center">
 
@@ -12,13 +12,15 @@
 
 **The High-Performance, Zero-Buffering Telegram Media Streaming Engine for Stremio & Nuvio.**
 
-*Stream 4K, 1080p, and multi-audio media directly from your private Telegram channels into any Stremio or Nuvio media center — featuring instant seek, token-encrypted access, and automated TMDB & StashDB metadata matching.*
+*Stream 4K, 1080p, and multi-audio media directly from your private Telegram channels into any Stremio or Nuvio media center — featuring instant seek, real-time message indexing, token-encrypted access, and automated TMDB metadata matching.*
 
 [Key Highlights](#-key-highlights) •
-[Dual Editions](#-dual-editions) •
+[Instant Real-Time Indexing](#-instant-real-time-indexing) •
 [Self-Hosting](#-self-hosting-guide) •
 [Installation](#-installation-into-stremio--nuvio) •
 [Architecture](#-zero-buffering-streaming-architecture) •
+[Adult Mode (Optional)](#-optional-adult-mode-teleflux-red) •
+[Inspirations](#-inspirations--references) •
 [Troubleshooting](#-troubleshooting--faq)
 
 </div>
@@ -31,30 +33,18 @@
 
 Videos start playing in **under a second**, with instantaneous scrubbing and zero playback buffering across Android TV, Fire TV, Windows, macOS, Linux, iOS, and Web players.
 
----
-
-## 🌟 Dual Editions
-
-Teleflux is engineered with a clean, single-variable environment switch (`ADULT_ONLY=False` or `ADULT_ONLY=True`) to serve two distinct media experiences:
-
-| Feature | ⚡ **Teleflux** (Main Edition) | 🔞 **Teleflux Red** (Adult Edition) |
-| :--- | :--- | :--- |
-| **Primary Focus** | Movies & TV Series | Adult Scenes & Studio Releases |
-| **Metadata Engine** | **TheMovieDatabase (TMDB)** & IMDb | **StashDB GraphQL API** |
-| **Catalog Structure** | `Teleflux Movies`, `Teleflux Series` | `Teleflux Red` Dedicated Vault |
-| **Card Badges** | `[Teleflux ⚡] 1080p HEVC HDR` | `[Teleflux Red ⚡] 1080p Studio` |
-| **Performer Metadata**| Actors, Directors, Episode Breakdowns | Performers, Studios, Tags |
-| **Dynamic Fallback** | Dark Modern TMDB SVG Posters | Cyberpunk Adult SVG Posters |
-| **Toggle in `.env`** | `ADULT_ONLY=False` | `ADULT_ONLY=True` |
+Within Stremio and Nuvio, your media is cleanly surfaced under standard **Telegram Movies** and **Telegram Series** catalogs, while the addon engine itself runs under **Teleflux**.
 
 ---
 
 ## ✨ Key Highlights
 
-- ⚡ **Zero-Buffering Playback**: Video playback initiates in **~300ms**. An in-memory 128 MB RAM BlockCache and an asynchronous 3-chunk prefetch pipeline eliminate stuttering and network idle time.
+- ⚡ **Zero-Buffering Playback**: Video playback initiates in **~300ms**. An in-memory 128 MB RAM BlockCache and an asynchronous 3-priority prefetch pipeline eliminate stuttering and network idle time.
+- 🔄 **Real-Time Instant Channel Indexing**: Operates on live Telegram MTProto socket push events (`events.NewMessage`). New movies or episodes sent to your channel are detected and indexed in **real time** (typically 1–2 seconds).
+- 📁 **Clean Standard Catalogs**: Media appears directly in your Stremio library under **Telegram Movies** and **Telegram Series**.
 - 🔒 **Encrypted Security Token Protection**: Public URLs are secured with a 32-character cryptographic token (`/{security_token}/manifest.json`, `/{security_token}/play/...`). Anyone attempting to access your server's IP directly without the token is blocked with `403 Forbidden`. Includes 1-click token rotation.
 - 🖥️ **Modern Dark Glassmorphism Dashboard**: Intuitive, responsive web interfaces (`/stremio` and `/settings`) featuring channel discovery, multi-channel selection, real-time indexing statistics, manual channel addition, and one-click installs.
-- 🔍 **Automated Metadata Matching**:
+- 🔍 **Automated TMDB Metadata Matching**:
   - Automatically cleans complex release filenames (`WEB-DL`, `HDRip`, `x265`, `10Bit`, `DDP5.1`, audio tags).
   - Matches official IMDb IDs, high-resolution posters, backdrops, plot summaries, and series season/episode numbers.
 - 📺 **Universal Player Compatibility**: Runs smoothly on **Stremio** and **Nuvio** across:
@@ -62,6 +52,20 @@ Teleflux is engineered with a clean, single-variable environment switch (`ADULT_
   - 💻 Windows / macOS / Linux / Steam Deck
   - 📱 Android Mobile / iOS (Web & External Players like Outplayer/VLC)
 - 🚀 **Hardware-Accelerated Decryption**: Raw Telegram packets are decrypted in C using AES-CTR (`tgcrypto`) at speeds exceeding 80 MB/s.
+
+---
+
+## ⚡ Instant Real-Time Indexing
+
+### How fast do new movies appear?
+Teleflux does **not** rely on a slow polling cron job or periodic interval timer. Instead, Teleflux maintains an open, persistent MTProto socket connection with Telegram:
+
+1. **Instant Push Notification**: The exact millisecond a video is posted or forwarded into your connected Telegram channel, Telegram pushes a `NewMessage` event over the socket to Teleflux.
+2. **Instant Metadata Parsing & Matching**: Teleflux immediately extracts the filename and media specifications, queries TheMovieDatabase (TMDB) API for posters, backdrop, overview, and IMDb IDs, and saves the entry into the local SQLite database.
+3. **Available in Stremio**: The entire process finishes in **1–2 seconds**. The next time you open or refresh your **Telegram Movies** or **Telegram Series** catalog in Stremio, the movie or episode is immediately ready to stream.
+
+> [!NOTE]
+> For historical videos sent before the bot joined the channel, Telegram's API prevents bots from reading past message history. Use the **🔄 Scan Channel History Now** button on the `/stremio` dashboard, or simply forward the older videos into the channel to trigger instant live indexing.
 
 ---
 
@@ -89,8 +93,7 @@ Setting up Teleflux requires free API credentials:
 3. Post or forward a video into the channel so the bot has an active event.
 
 ### 4. Metadata API Key
-- **For Teleflux (Movies & Series):** Get a free API Key (v3 auth) from [themoviedb.org](https://www.themoviedb.org/).
-- **For Teleflux Red (Adult):** Get a free API Key from [stashdb.org](https://stashdb.org/).
+- Get a free API Key (v3 auth) from [themoviedb.org](https://www.themoviedb.org/).
 
 ---
 
@@ -117,9 +120,6 @@ Setting up Teleflux requires free API credentials:
    PUBLIC_URL=http://192.168.1.16:7001
    DATA_DIR=./data
    
-   # Set to True for Teleflux Red (Adult); False for Teleflux (Movies & Series)
-   ADULT_ONLY=False
-   
    # Telegram Credentials
    TELEGRAM_API_ID=12345678
    TELEGRAM_API_HASH=your_telegram_api_hash_here
@@ -130,7 +130,6 @@ Setting up Teleflux requires free API credentials:
    
    # Metadata Key
    TMDB_API_KEY=your_tmdb_api_key_here
-   STASHDB_API_KEY=your_stashdb_api_key_here
    ```
 
 3. **Launch the container:**
@@ -223,7 +222,8 @@ Access the management interface anytime at:
 ### Method A: One-Click Install
 1. Open the Web Dashboard (`http://<SERVER-IP>:<PORT>/stremio`) on the device running Stremio or Nuvio.
 2. Click **🎬 Install to Stremio**.
-3. Your media player will launch and prompt you to confirm the installation.
+3. Your media player will launch and prompt you to install **Teleflux**.
+4. Once installed, your library will display the **Telegram Movies** and **Telegram Series** catalogs.
 
 ### Method B: Manual Manifest URL
 1. On the dashboard, click **📋 Copy** to copy your tokenized manifest link:
@@ -251,7 +251,7 @@ Teleflux eliminates traditional downloading bottlenecks by piping encrypted Tele
 │ Teleflux Streaming Engine (FastAPI)                    │
 │                                                        │
 │  • 128 MB RAM BlockCache (0.001 ms seek response)      │
-│  • Asynchronous 3-Chunk Prefetch Worker                │
+│  • Asynchronous 3-Priority Prefetch Scheduler          │
 │  • tgcrypto C-Accelerated Packet Decryption (>80 MB/s) │
 └───────────┬────────────────────────────────────────────┘
             │ Parallel MTProto Requests (512 KB chunks)
@@ -262,8 +262,33 @@ Teleflux eliminates traditional downloading bottlenecks by piping encrypted Tele
 ```
 
 1. **Instant RAM Seek (`BlockCache`)**: Video players probe the first 64 KB (header) and last 512 KB (atom indexes) before requesting byte 0. Teleflux caches these segments in RAM, ensuring startup playback in **under 300 ms**.
-2. **Prefetch Pipeline (`asyncio.Queue`)**: While your player streams Chunk 1, Teleflux is already downloading Chunks 2 and 3 from Telegram. Network pauses between packets are completely eliminated.
+2. **3-Priority Prefetch Scheduler**: Urgent playback head requests receive top priority, near read-ahead buffers ensure uninterrupted playback, and speculative prefetch downloads future chunks in the background. Network pauses between packets are completely eliminated.
 3. **HTTP 206 Standard**: Fully compatible with ExoPlayer (Android TV), MPV (Desktop), and AVPlayer (Apple).
+
+---
+
+## 🔞 Optional: Adult Mode (Teleflux Red)
+
+Teleflux includes an optional toggle for adult media collections powered by StashDB:
+
+- **How to enable:**
+  1. In your `.env` file, set:
+     ```env
+     ADULT_ONLY=True
+     STASHDB_API_KEY=your_stashdb_api_key_here
+     ```
+  2. (Optional) Get a free API key at [stashdb.org](https://stashdb.org/).
+  3. Restart Teleflux (`docker compose restart` or restart Python).
+- When enabled, the addon activates StashDB GraphQL scene matching and presents your collection under the `Teleflux Red` catalog. When disabled (`ADULT_ONLY=False`, default), Teleflux operates purely in mainstream Movies & TV Series mode with TMDB.
+
+---
+
+## 💡 Inspirations & References
+
+Teleflux was inspired by and built with reference to the work of these open-source projects:
+
+- **[TGTV](https://github.com/aravindbuilds/TGTV)** by [@aravindbuilds](https://github.com/aravindbuilds) — Pioneered concepts for bridging Telegram channel media into a modern TV / media-center experience.
+- **[TMPlayer](https://github.com/dracu-lah/TMPlayer)** by [@dracu-lah](https://github.com/dracu-lah) — Outstanding reference for Telegram MTProto media streaming and direct playback architectures.
 
 ---
 

@@ -399,13 +399,13 @@ def build_manifest():
             {
                 "type": "movie",
                 "id": "tg_movies",
-                "name": "Teleflux Movies",
+                "name": "Telegram Movies",
                 "extra": [{"name": "skip", "isRequired": False}]
             },
             {
                 "type": "series",
                 "id": "tg_series",
-                "name": "Teleflux Series",
+                "name": "Telegram Series",
                 "extra": [{"name": "skip", "isRequired": False}]
             }
         ]
