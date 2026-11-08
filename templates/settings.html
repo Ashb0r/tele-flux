@@ -493,12 +493,12 @@
     <!-- Top Navigation Bar -->
     <nav class="top-nav">
       <div class="brand">
-        <div class="brand-icon">⚡</div>
-        <span>T-Stream</span>
+        <div class="brand-icon" id="brandIcon">⚡</div>
+        <span id="brandText">Teleflux</span>
       </div>
       <div class="nav-links">
-        <a href="/stremio" class="nav-link">📺 Stremio Add-on</a>
-        <a href="/settings" class="nav-link active">⚙️ Settings & Credentials</a>
+        <a href="/stremio" class="nav-link">📺 Stremio Addon</a>
+        <a href="/settings" class="nav-link active">⚙️ Bot Credentials</a>
       </div>
     </nav>
 
@@ -760,12 +760,17 @@
       function applyAdultMode(isAdult) {
         const pageTitle = document.getElementById('pageTitle');
         const pageDesc = document.getElementById('pageDesc');
+        const brandText = document.getElementById('brandText');
+        const brandIcon = document.getElementById('brandIcon');
         const tmdbCard = document.getElementById('tmdbCard');
         const stashCard = document.getElementById('stashCard');
         const resetCardTitle = document.getElementById('resetCardTitle');
 
         if (isAdult) {
-          if (pageTitle) pageTitle.innerText = 'Telegram & StashDB API Configuration';
+          document.title = 'Teleflux Red - Settings & Credentials';
+          if (brandText) brandText.innerText = 'Teleflux Red';
+          if (brandIcon) brandIcon.innerText = '🔞';
+          if (pageTitle) pageTitle.innerText = 'Teleflux Red Credentials & Setup';
           if (pageDesc)
             pageDesc.innerText =
               'Configure your Telegram Bot Token and StashDB API key for adult streaming on Stremio.';
@@ -773,7 +778,10 @@
           if (stashCard) stashCard.style.display = 'block';
           if (resetCardTitle) resetCardTitle.innerText = '3. Clean Reset & Maintenance';
         } else {
-          if (pageTitle) pageTitle.innerText = 'Telegram & TMDB API Configuration';
+          document.title = 'Teleflux - Settings & Credentials';
+          if (brandText) brandText.innerText = 'Teleflux';
+          if (brandIcon) brandIcon.innerText = '⚡';
+          if (pageTitle) pageTitle.innerText = 'Teleflux Credentials & Setup';
           if (pageDesc)
             pageDesc.innerText =
               'Configure your Telegram Bot Token and TMDB API key for movies & series on Stremio.';

@@ -120,82 +120,107 @@ async def verify_stashdb_key(api_key: str) -> dict:
         }
 
 
-def clean_stash_filename(file_name: str) -> str:
+def extract_scene_title_and_date(file_name: str) -> tuple[str, str | None]:
     """
-    Cleans a video file name to extract the exact real scene title as named in StashDB:
-    - Strips container file extensions (.mp4, .mkv, etc.)
-    - Extracts date if present (e.g. 2018-11-06 or 2018)
-    - Strips parenthesized date and brackets
-    - Removes common quality tokens (1080p, 720p, 2160p, 4k, HEVC, AAC, x264, x265)
-    - Normalizes dots and underscores into spaces
+    Extracts the exact scene title and release date from an adult video filename.
+    Designed specifically for standard scene file format:
+    'EXACT_TITLE_OF_SCENE (YYYY-MM-DD).mp4' (or .m2ts, .mkv, [YYYY-MM-DD], etc.)
     """
-    # Remove file extension
     base = re.sub(r'(?i)\.(mkv|mp4|avi|mov|webm|ts|m2ts|m4v|wmv|flv)$', '', file_name.strip())
 
-    # Strip parenthesized date and brackets
-    clean = re.sub(r'\(\d{4}(?:-\d{2}-\d{2})?\)', '', base)
-    clean = re.sub(r'\[[^\]]*\]', '', clean)
+    # 1. Look for date in parentheses (YYYY-MM-DD) or brackets [YYYY-MM-DD]
+    date = None
+    m = re.search(r'[\(\[]\s*(\d{4}[-.\s]\d{1,2}[-.\s]\d{1,2})\s*[\)\]]', base)
+    if m:
+        raw_date = m.group(1)
+        # Normalize date to YYYY-MM-DD
+        parts = re.split(r'[-.\s]', raw_date)
+        if len(parts) == 3:
+            yyyy = parts[0]
+            mm = parts[1].zfill(2)
+            dd = parts[2].zfill(2)
+            date = f"{yyyy}-{mm}-{dd}"
+        # Scene title is everything before the date tag
+        raw_title = base[:m.start()].strip()
+    else:
+        # Fallback: standalone YYYY-MM-DD date
+        m2 = re.search(r'(?:^|[^\d])(20\d{2}|19\d{2})[-._](0[1-9]|1[0-2])[-._](0[1-9]|[12]\d|3[01])(?:$|[^\d])', base)
+        if m2:
+            date = f"{m2.group(1)}-{m2.group(2)}-{m2.group(3)}"
+            raw_title = (base[:m2.start()] + " " + base[m2.end():]).strip()
+        else:
+            raw_title = base.strip()
 
-    # Replace underscores and dots with spaces
-    clean = clean.replace('_', ' ').replace('.', ' ')
+    # If title uses dots or underscores instead of spaces and has no spaces, normalize separators to spaces
+    if ('_' in raw_title or '.' in raw_title) and (' ' not in raw_title):
+        raw_title = raw_title.replace('_', ' ').replace('.', ' ')
 
-    # Strip resolution, codec, and quality suffixes if appended
-    clean = re.sub(r'(?i)\b(2160p|4k|1080p|720p|480p|360p|uhd|fhd|hd|hevc|x265|x264|aac|ac3|dvdrip|web-dl|webrip)\b', '', clean)
+    # Remove square-bracketed quality tokens like [1080p]
+    clean_title = re.sub(r'\[[^\]]*\]', ' ', raw_title)
+    # Strip standalone quality tokens if any
+    clean_title = re.sub(r'(?i)\b(2160p|4k|1080p|720p|480p|360p|uhd|fhd|hd|hevc|x265|x264|aac|ac3|dvdrip|web-dl|webrip)\b', ' ', clean_title)
+    # Clean double spaces and leading/trailing dashes/punctuation
+    clean_title = re.sub(r'\s+', ' ', clean_title).strip(' -_.')
 
-    # Clean double spaces
-    clean = re.sub(r'\s+', ' ', clean).strip()
+    return (clean_title if clean_title else base.strip()), date
 
-    return clean if clean else base
+
+def clean_stash_filename(file_name: str) -> str:
+    """
+    Cleans a video file name to extract the exact real scene title as named in StashDB.
+    """
+    title, _ = extract_scene_title_and_date(file_name)
+    return title
 
 
 def extract_filename_date(file_name: str) -> str | None:
-    """Extracts date YYYY-MM-DD or YYYY if present in filename parentheses."""
-    match = re.search(r'\((\d{4}(?:-\d{2}-\d{2})?)\)', file_name)
-    return match.group(1) if match else None
+    """
+    Extracts exact date (YYYY-MM-DD) from filename.
+    """
+    _, date = extract_scene_title_and_date(file_name)
+    return date
+
+
+def normalize_scene_title(title: str) -> str:
+    """
+    Normalizes a scene title for strict exact comparison:
+    - Lowercase
+    - Replaces smart quotes / apostrophes with standard ASCII
+    - Strips punctuation (except spaces)
+    - Collapses multiple whitespace
+    """
+    if not title:
+        return ""
+    t = title.lower().strip()
+    t = t.replace("’", "'").replace("‘", "'").replace("“", '"').replace("”", '"')
+    t = t.replace("–", "-").replace("—", "-")
+    # Remove punctuation that might differ slightly across databases
+    t = re.sub(r"[\.,:;!\?'\"_]", "", t)
+    t = re.sub(r'\s+', ' ', t).strip()
+    return t
 
 
 async def search_stashdb_scene(file_name: str, caption: str = "", api_key: str | None = None) -> dict | None:
     """
-    Searches StashDB using GraphQL for a scene matching the exact video file name.
+    Searches StashDB using GraphQL for a scene matching the exact video file name and exact date.
+    Filename expected format: 'EXACT_TITLE_OF_SCENE (YYYY-MM-DD).mp4' (or .m2ts, etc.).
+    Enforces STRICT matching: scene title must match exactly and date must match.
+    Never returns an incorrect or partial scene match.
     """
     from settings_manager import load_settings
     if not api_key:
         api_key = load_settings().get("stashdb_api_key") or os.getenv("STASHDB_API_KEY", "")
 
-    cleaned_title = clean_stash_filename(file_name)
-    date_hint = extract_filename_date(file_name)
+    cleaned_title, date_hint = extract_scene_title_and_date(file_name)
+    if not cleaned_title:
+        cleaned_title = clean_stash_filename(file_name)
+    if not date_hint:
+        date_hint = extract_filename_date(file_name)
+
     cache_key = f"{cleaned_title.lower()}_{date_hint or ''}"
 
     if cache_key in _SCENE_CACHE:
         return _SCENE_CACHE[cache_key]
-
-    # Attempt 1: Check running local StashDB catalog addon (port 7000)
-    for host in ("host.docker.internal", "localhost", "127.0.0.1", "stash_catalog_addon"):
-        try:
-            from urllib.parse import quote
-            catalog_search_url = f"http://{host}:7000/catalog/porn/catalog_realwifestories/search={quote(cleaned_title)}.json"
-            async with httpx.AsyncClient(timeout=3.0) as http:
-                c_resp = await http.get(catalog_search_url)
-                if c_resp.status_code == 200:
-                    metas = c_resp.json().get("metas", [])
-                    if metas:
-                        top = metas[0]
-                        res_scene = {
-                            "stash_id": top["id"],
-                            "media_type": "porn",
-                            "title": top.get("name") or cleaned_title,
-                            "year": int(top["releaseInfo"]) if top.get("releaseInfo", "").isdigit() else None,
-                            "poster": top.get("poster"),
-                            "backdrop": top.get("background") or top.get("poster"),
-                            "overview": top.get("description") or f"Adult Scene: {top.get('name')}",
-                            "genres": top.get("genres", ["Adult"]),
-                            "rating": 0.0,
-                            "studio": top.get("genres", ["Studio"])[0] if top.get("genres") else "Studio"
-                        }
-                        _SCENE_CACHE[cache_key] = res_scene
-                        return res_scene
-        except Exception:
-            pass
 
     graphql_query = """
     query SearchScene($input: SceneQueryInput!) {
@@ -243,75 +268,115 @@ async def search_stashdb_scene(file_name: str, caption: str = "", api_key: str |
     }
     """
 
-    # Generate search queries:
-    # 1. Exact cleaned title
-    # 2. If title has a dash "Studio - Scene Title", try both parts
     search_candidates = [cleaned_title]
     if " - " in cleaned_title:
         parts = cleaned_title.split(" - ")
         if len(parts) >= 2:
-            search_candidates.append(parts[-1].strip())  # Scene title part
-            search_candidates.append(parts[0].strip())   # Studio part
+            search_candidates.append(parts[-1].strip())
+            search_candidates.append(parts[0].strip())
             search_candidates.append(" ".join(parts).strip())
 
     found_scene = None
+    target_norm = normalize_scene_title(cleaned_title)
 
-    for search_text in search_candidates:
-        if not search_text or len(search_text) < 2:
-            continue
+    # Step 1: Query StashDB using exact date filter if YYYY-MM-DD date is provided
+    if date_hint and len(date_hint) == 10:
+        for search_text in search_candidates:
+            if not search_text or len(search_text) < 2:
+                continue
 
-        variables = {
-            "input": {
-                "text": search_text,
-                "page": 1,
-                "per_page": 15,
-                "sort": "DATE",
-                "direction": "DESC"
+            cand_norm = normalize_scene_title(search_text)
+            variables = {
+                "input": {
+                    "text": search_text,
+                    "date": {
+                        "value": date_hint,
+                        "modifier": "EQUALS"
+                    },
+                    "page": 1,
+                    "per_page": 15
+                }
             }
-        }
 
-        data, status = await execute_graphql(graphql_query, variables=variables, api_key=api_key, timeout=12.0)
-        if not data or "data" not in data:
-            continue
+            data, status = await execute_graphql(graphql_query, variables=variables, api_key=api_key, timeout=12.0)
+            if not data or "data" not in data:
+                continue
 
-        scenes = data.get("data", {}).get("queryScenes", {}).get("scenes", [])
-        if not scenes:
-            continue
+            scenes = data.get("data", {}).get("queryScenes", {}).get("scenes", [])
+            if not scenes:
+                continue
 
-        # Look for exact date match first if date hint is present
-        if date_hint:
+            # Prioritize STRICT title match among date-matched scenes
             for s in scenes:
-                if s.get("date") == date_hint:
-                    found_scene = s
-                    break
+                s_title = (s.get("title") or "").strip()
+                s_norm = normalize_scene_title(s_title)
+                s_date = (s.get("date") or "").strip()
 
-        # Look for exact title match
-        if not found_scene:
-            target_lower = cleaned_title.lower()
+                if s_norm == target_norm or s_norm == cand_norm:
+                    if not s_date or s_date == date_hint:
+                        found_scene = s
+                        break
+
+            if found_scene:
+                break
+
+    # Step 2: If no date filter match (or no date in filename), search text and strictly match exact title & date
+    if not found_scene:
+        for search_text in search_candidates:
+            if not search_text or len(search_text) < 2:
+                continue
+
+            cand_norm = normalize_scene_title(search_text)
+            variables = {
+                "input": {
+                    "text": search_text,
+                    "page": 1,
+                    "per_page": 25,
+                    "sort": "DATE",
+                    "direction": "DESC"
+                }
+            }
+
+            data, status = await execute_graphql(graphql_query, variables=variables, api_key=api_key, timeout=12.0)
+            if not data or "data" not in data:
+                continue
+
+            scenes = data.get("data", {}).get("queryScenes", {}).get("scenes", [])
+            if not scenes:
+                continue
+
+            exact_title_and_date_matches = []
+            exact_title_matches = []
+
             for s in scenes:
-                s_title = (s.get("title") or "").strip().lower()
-                if s_title and (s_title == target_lower or s_title in target_lower or target_lower in s_title):
-                    found_scene = s
-                    break
+                s_title = (s.get("title") or "").strip()
+                s_norm = normalize_scene_title(s_title)
+                s_date = (s.get("date") or "").strip()
 
-        # If not matched directly, check if performers/studio match
-        if not found_scene:
-            for s in scenes:
-                studio_name = (s.get("studio") or {}).get("name", "").lower()
-                performer_names = [p["performer"]["name"].lower() for p in s.get("performers", []) if p.get("performer", {}).get("name")]
-                if studio_name and studio_name in target_lower:
-                    found_scene = s
-                    break
-                if any(p in target_lower for p in performer_names):
-                    found_scene = s
-                    break
+                # STRICT title match only (no substring)
+                if s_norm != target_norm and s_norm != cand_norm:
+                    continue
 
-        # If still not chosen, use the top search result
-        if not found_scene and scenes:
-            found_scene = scenes[0]
+                if date_hint:
+                    if s_date == date_hint:
+                        exact_title_and_date_matches.append(s)
+                    elif not s_date:
+                        exact_title_matches.append(s)
+                    else:
+                        # Conflicting date! Must not match a different scene
+                        continue
+                else:
+                    exact_title_matches.append(s)
 
-        if found_scene:
-            break
+            if exact_title_and_date_matches:
+                found_scene = exact_title_and_date_matches[0]
+                break
+            elif not date_hint and exact_title_matches:
+                found_scene = exact_title_matches[0]
+                break
+            elif date_hint and exact_title_matches:
+                found_scene = exact_title_matches[0]
+                break
 
     if not found_scene:
         return None
@@ -483,7 +548,7 @@ def format_stashdb_stream(header: str, specs: dict) -> tuple[str, str]:
     res = specs.get("resolution") or "1080p"
     codec = specs.get("codec") or ""
     badge_core = f"{res} {codec}".strip()
-    badge = f"[StashDB ⚡] {badge_core}" if badge_core else "[StashDB ⚡] HD"
+    badge = f"[Teleflux Red ⚡] {badge_core}" if badge_core else "[Teleflux Red ⚡] HD"
 
     lines = [f"🔞 {header}"]
 
@@ -525,7 +590,7 @@ def generate_adult_poster_svg(title: str) -> bytes:
     <text text-anchor="middle" dy="18" font-family="-apple-system, system-ui, sans-serif" font-size="48">🔞</text>
   </g>
   <g transform="translate(300, 520)">
-    <text text-anchor="middle" fill="#f43f5e" font-family="-apple-system, system-ui, sans-serif" font-size="16" font-weight="800" letter-spacing="3">STASHDB VAULT</text>
+    <text text-anchor="middle" fill="#f43f5e" font-family="-apple-system, system-ui, sans-serif" font-size="16" font-weight="800" letter-spacing="3">TELEFLUX RED</text>
     <text text-anchor="middle" dy="45" fill="#f8fafc" font-family="-apple-system, system-ui, sans-serif" font-size="24" font-weight="700">{clean_title}</text>
   </g>
 </svg>"""

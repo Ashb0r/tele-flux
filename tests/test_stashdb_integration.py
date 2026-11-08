@@ -46,7 +46,7 @@ class StashDbIntegrationTestSuite(unittest.IsolatedAsyncioTestCase):
 
         svg = generate_adult_poster_svg("Alexis Texas Scene")
         self.assertIn(b"<svg", svg)
-        self.assertIn(b"STASHDB VAULT", svg)
+        self.assertIn(b"TELEFLUX RED", svg)
         self.assertIn(b"Alexis Texas Scene", svg)
 
     def test_03_stremio_id_parsing(self):
@@ -134,21 +134,22 @@ class StashDbIntegrationTestSuite(unittest.IsolatedAsyncioTestCase):
             cat_ids = [c["id"] for c in man["catalogs"]]
             self.assertIn("tg_adult", cat_ids)
 
+            token = load_settings().get("security_token", "")
             # 4. Verify catalog route returns our indexed scene
-            res_cat = await client.get("/catalog/porn/tg_adult.json")
+            res_cat = await client.get(f"/{token}/catalog/porn/tg_adult.json")
             self.assertEqual(res_cat.status_code, 200)
             metas = res_cat.json().get("metas", [])
             stash_metas = [m for m in metas if m["id"] == "stash_unit_test_uuid_999"]
             self.assertEqual(len(stash_metas), 1)
 
             # 5. Verify meta route
-            res_meta = await client.get("/meta/porn/stash_unit_test_uuid_999.json")
+            res_meta = await client.get(f"/{token}/meta/porn/stash_unit_test_uuid_999.json")
             self.assertEqual(res_meta.status_code, 200)
             meta_obj = res_meta.json().get("meta", {})
             self.assertEqual(meta_obj["name"], "Brazzers Unit Test Scene")
 
             # 6. Verify stream route
-            res_stream = await client.get("/stream/porn/stash_unit_test_uuid_999.json")
+            res_stream = await client.get(f"/{token}/stream/porn/stash_unit_test_uuid_999.json")
             self.assertEqual(res_stream.status_code, 200)
             streams = res_stream.json().get("streams", [])
             self.assertEqual(len(streams), 1)

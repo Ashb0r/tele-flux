@@ -1,6 +1,7 @@
 import os
 import re
 import asyncio
+import secrets
 from contextlib import asynccontextmanager
 from urllib.parse import quote
 from fastapi import FastAPI, Request, Response, HTTPException
@@ -16,8 +17,9 @@ from database import (
     get_streams_by_id,
     get_video_by_location,
     get_library_stats,
+    is_uuid_str,
 )
-from settings_manager import load_settings, save_settings, is_configured
+from settings_manager import load_settings, save_settings, is_configured, regenerate_security_token
 from telegram_client import (
     start_telegram_service,
     stop_telegram_service,
@@ -33,10 +35,11 @@ TEMPLATES_DIR = os.path.join(os.path.dirname(__file__), "templates")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    brand = "Teleflux Red" if ADULT_ONLY else "Teleflux"
     print("=" * 60)
-    print("  🚀 Telegram Stremio Addon Server")
-    print(f"  📡 Public URL: {PUBLIC_URL}")
-    print(f"  ⚙️ Configuration Web UI: {PUBLIC_URL}/configure")
+    print(f"  🚀 {brand} Addon Server")
+    print(f"  📡 Base Public URL: {PUBLIC_URL}")
+    print(f"  ⚙️ Configuration Web UI: {PUBLIC_URL}/stremio")
     print("=" * 60)
     await init_db()
 
@@ -53,7 +56,7 @@ async def lifespan(app: FastAPI):
     print("[Shutdown] Stopping Telegram services...")
     await stop_telegram_service()
 
-app = FastAPI(title="Telegram Stremio Addon", lifespan=lifespan)
+app = FastAPI(title="Teleflux Red Addon" if ADULT_ONLY else "Teleflux Addon", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -69,13 +72,8 @@ app.add_middleware(
 
 @app.get("/", response_class=HTMLResponse)
 async def index_page(request: Request):
-    # If request is from Stremio or asking for JSON, return manifest
-    accept = request.headers.get("accept", "")
-    if "application/json" in accept and "text/html" not in accept:
-        return await get_manifest()
-    
-    # Otherwise render configuration UI
-    return await settings_page()
+    # Render main Stremio configuration dashboard
+    return await stremio_page()
 
 @app.get("/settings", response_class=HTMLResponse)
 async def settings_page():
@@ -88,8 +86,8 @@ async def settings_page():
 
 @app.get("/configure", response_class=HTMLResponse)
 async def configure_page():
-    # Backwards compatibility: render settings page
-    return await settings_page()
+    # Backwards compatibility: render stremio dashboard
+    return await stremio_page()
 
 @app.get("/stremio", response_class=HTMLResponse)
 async def stremio_page():
@@ -103,16 +101,21 @@ async def stremio_page():
 @app.get("/api/config")
 async def get_config_api():
     s = load_settings()
+    token = s.get("security_token", "")
+    manifest_url = f"{PUBLIC_URL}/{token}/manifest.json" if token else f"{PUBLIC_URL}/manifest.json"
     return {
         "configured": s.get("configured", False),
         "adult_only": ADULT_ONLY,
+        "addon_name": "Teleflux Red" if ADULT_ONLY else "Teleflux",
         "bot_token": s.get("bot_token", ""),
         "login_mode": s.get("login_mode", "bot"),
         "session_string": s.get("session_string", ""),
         "tmdb_api_key": s.get("tmdb_api_key", ""),
         "stashdb_api_key": s.get("stashdb_api_key", ""),
         "channel_ids": s.get("channel_ids", []),
-        "public_url": PUBLIC_URL
+        "public_url": PUBLIC_URL,
+        "security_token": token,
+        "manifest_url": manifest_url
     }
 
 class SaveSettingsRequest(BaseModel):
@@ -194,10 +197,13 @@ class StremioChannelsRequest(BaseModel):
 async def save_stremio_channels_api(payload: StremioChannelsRequest):
     save_settings({"channel_ids": payload.channel_ids})
     await start_telegram_service()
+    s = load_settings()
+    token = s.get("security_token", "")
+    manifest_url = f"{PUBLIC_URL}/{token}/manifest.json" if token else f"{PUBLIC_URL}/manifest.json"
     return {
         "success": True,
         "channel_ids": payload.channel_ids,
-        "manifest_url": f"{PUBLIC_URL}/manifest.json"
+        "manifest_url": manifest_url
     }
 
 @app.post("/api/stremio/scan")
@@ -217,10 +223,25 @@ async def stremio_stats_api():
     from database import get_library_stats
     from telegram_client import is_scanning_channels
     stats = await get_library_stats()
+    s = load_settings()
+    token = s.get("security_token", "")
+    manifest_url = f"{PUBLIC_URL}/{token}/manifest.json" if token else f"{PUBLIC_URL}/manifest.json"
     return {
         "stats": stats,
         "is_scanning": is_scanning_channels(),
-        "manifest_url": f"{PUBLIC_URL}/manifest.json"
+        "manifest_url": manifest_url,
+        "security_token": token
+    }
+
+@app.post("/api/security-token/regenerate")
+async def regenerate_token_api():
+    new_token = regenerate_security_token()
+    manifest_url = f"{PUBLIC_URL}/{new_token}/manifest.json"
+    return {
+        "success": True,
+        "security_token": new_token,
+        "manifest_url": manifest_url,
+        "message": "New security token generated successfully! Please update your Stremio installation with the new URL."
     }
 
 @app.post("/api/system/reset")
@@ -327,18 +348,30 @@ async def save_config_api(payload: SaveConfigRequest):
     if not success:
         return {"error": "Failed to connect to Telegram with provided credentials."}
 
-    manifest_url = f"{PUBLIC_URL}/manifest.json"
+    s = load_settings()
+    token = s.get("security_token", "")
+    manifest_url = f"{PUBLIC_URL}/{token}/manifest.json" if token else f"{PUBLIC_URL}/manifest.json"
     return {
         "success": True,
         "manifest_url": manifest_url
     }
 
 # ---------------------------------------------------------------------
-# Stremio Addon Protocol Endpoints
+# Stremio Addon Protocol & Security Token Endpoints
 # ---------------------------------------------------------------------
 
-@app.get("/manifest.json")
-async def get_manifest():
+def verify_security_token(token: str):
+    s = load_settings()
+    expected = s.get("security_token")
+    if not expected:
+        return
+    if not token or not secrets.compare_digest(str(token), str(expected)):
+        raise HTTPException(
+            status_code=403,
+            detail="Forbidden: Invalid or missing security token."
+        )
+
+def build_manifest():
     conf = is_configured()
 
     types = []
@@ -346,17 +379,19 @@ async def get_manifest():
     catalogs = []
 
     if ADULT_ONLY:
-        types = ["porn"]
-        id_prefixes = ["stash_"]
+        types = ["porn", "movie"]
+        id_prefixes = ["stash_", "stash:", "stashdb_", "stashdb:"]
         catalogs = [
             {
                 "type": "porn",
                 "id": "tg_adult",
-                "name": "Telegram Adult Vault",
+                "name": "Teleflux Red",
                 "extra": [{"name": "skip", "isRequired": False}]
             }
         ]
-        addon_name = "Telegram Adult Vault"
+        addon_name = "Teleflux Red"
+        addon_id = "org.teleflux.red"
+        addon_desc = "Private high-definition adult streaming vault powered by Teleflux"
     else:
         types = ["movie", "series"]
         id_prefixes = ["tt", "tmdb:"]
@@ -364,17 +399,19 @@ async def get_manifest():
             {
                 "type": "movie",
                 "id": "tg_movies",
-                "name": "Telegram Movies",
+                "name": "Teleflux Movies",
                 "extra": [{"name": "skip", "isRequired": False}]
             },
             {
                 "type": "series",
                 "id": "tg_series",
-                "name": "Telegram Series",
+                "name": "Teleflux Series",
                 "extra": [{"name": "skip", "isRequired": False}]
             }
         ]
-        addon_name = "Telegram Library TV"
+        addon_name = "Teleflux"
+        addon_id = "org.teleflux.streams"
+        addon_desc = "High-speed continuous Telegram media streaming bridge for Stremio"
 
     resources = []
     if conf:
@@ -384,10 +421,10 @@ async def get_manifest():
         resources.append({"name": "stream", "types": types, "idPrefixes": id_prefixes})
 
     return {
-        "id": "org.homelab.telegram.streams",
-        "version": "1.3.0",
+        "id": addon_id,
+        "version": "2.0.0",
         "name": addon_name,
-        "description": "Stream high-definition videos directly from your Telegram channels without buffering",
+        "description": addon_desc,
         "resources": resources,
         "types": types if conf else [],
         "catalogs": catalogs if conf else [],
@@ -398,12 +435,25 @@ async def get_manifest():
         }
     }
 
+@app.get("/{token}/manifest.json")
+async def get_secure_manifest(token: str):
+    verify_security_token(token)
+    return build_manifest()
+
+@app.get("/manifest.json")
+async def get_manifest_unauthorized():
+    raise HTTPException(
+        status_code=403,
+        detail="Forbidden: Security token required. Please install using your private URL from the configuration dashboard."
+    )
+
 # ---------------------------------------------------------------------
 # Dynamic SVG Poster Generator (Ensures no card is EVER blank in Stremio)
 # ---------------------------------------------------------------------
 
+@app.get("/{token}/poster/{media_type}/{title}.svg")
 @app.get("/poster/{media_type}/{title}.svg")
-async def get_poster_image(media_type: str, title: str):
+async def get_poster_image(media_type: str, title: str, token: str | None = None):
     if ADULT_ONLY or media_type == "porn":
         from stashdb import generate_adult_poster_svg
         svg_data = generate_adult_poster_svg(title)
@@ -416,14 +466,17 @@ async def get_poster_image(media_type: str, title: str):
         headers={"Cache-Control": "public, max-age=86400"}
     )
 
-def resolve_poster(poster: str | None, media_type: str, title: str) -> str:
+def resolve_poster(poster: str | None, media_type: str, title: str, token: str = "") -> str:
     if poster and poster.strip() and poster.startswith("http"):
         return poster
-    return f"{PUBLIC_URL}/poster/{media_type}/{quote(title)}.svg"
+    prefix = f"/{token}" if token else ""
+    return f"{PUBLIC_URL}{prefix}/poster/{media_type}/{quote(title)}.svg"
 
-@app.get("/catalog/{media_type}/{catalog_id}.json")
-@app.get("/catalog/{media_type}/{catalog_id}/{extra}.json")
-async def get_catalog(media_type: str, catalog_id: str, extra: str | None = None):
+# ---------------------------------------------------------------------
+# Catalog Handlers
+# ---------------------------------------------------------------------
+
+async def handle_catalog(media_type: str, catalog_id: str, extra: str | None = None, token: str = ""):
     skip = 0
     if extra and "skip=" in extra:
         try:
@@ -442,7 +495,7 @@ async def get_catalog(media_type: str, catalog_id: str, extra: str | None = None
 
     metas = []
     for item in items:
-        safe_poster = resolve_poster(item.get("poster"), target_type, item["title"])
+        safe_poster = resolve_poster(item.get("poster"), target_type, item["title"], token=token)
         metas.append({
             "id": item["stremio_id"],
             "type": target_type,
@@ -454,9 +507,23 @@ async def get_catalog(media_type: str, catalog_id: str, extra: str | None = None
 
     return {"metas": metas}
 
-@app.get("/meta/{media_type}/{item_id}.json")
-async def get_meta(media_type: str, item_id: str):
-    if ADULT_ONLY or media_type == "porn" or item_id.startswith("stash_") or item_id.startswith("stash:"):
+@app.get("/{token}/catalog/{media_type}/{catalog_id}.json")
+@app.get("/{token}/catalog/{media_type}/{catalog_id}/{extra}.json")
+async def get_secure_catalog(token: str, media_type: str, catalog_id: str, extra: str | None = None):
+    verify_security_token(token)
+    return await handle_catalog(media_type, catalog_id, extra, token=token)
+
+@app.get("/catalog/{media_type}/{catalog_id}.json")
+@app.get("/catalog/{media_type}/{catalog_id}/{extra}.json")
+async def get_catalog_unauthorized(media_type: str, catalog_id: str, extra: str | None = None):
+    raise HTTPException(status_code=403, detail="Forbidden: Security token required.")
+
+# ---------------------------------------------------------------------
+# Metadata Handlers
+# ---------------------------------------------------------------------
+
+async def handle_meta(media_type: str, item_id: str, token: str = ""):
+    if ADULT_ONLY or media_type == "porn" or item_id.startswith("stash_") or item_id.startswith("stash:") or item_id.startswith("stashdb_") or item_id.startswith("stashdb:") or is_uuid_str(item_id):
         target_type = "porn"
     elif media_type == "series":
         target_type = "series"
@@ -467,7 +534,7 @@ async def get_meta(media_type: str, item_id: str):
     if not item:
         raise HTTPException(status_code=404, detail="Item not found")
 
-    safe_poster = resolve_poster(item.get("poster"), target_type, item["title"])
+    safe_poster = resolve_poster(item.get("poster"), target_type, item["title"], token=token)
 
     meta_dict = {
         "id": item_id,
@@ -486,9 +553,21 @@ async def get_meta(media_type: str, item_id: str):
 
     return {"meta": meta_dict}
 
-@app.get("/stream/{media_type}/{item_id}.json")
-async def get_stream(media_type: str, item_id: str, request: Request):
-    if ADULT_ONLY or media_type == "porn" or item_id.startswith("stash_") or item_id.startswith("stash:"):
+@app.get("/{token}/meta/{media_type}/{item_id}.json")
+async def get_secure_meta(token: str, media_type: str, item_id: str):
+    verify_security_token(token)
+    return await handle_meta(media_type, item_id, token=token)
+
+@app.get("/meta/{media_type}/{item_id}.json")
+async def get_meta_unauthorized(media_type: str, item_id: str):
+    raise HTTPException(status_code=403, detail="Forbidden: Security token required.")
+
+# ---------------------------------------------------------------------
+# Stream Handlers
+# ---------------------------------------------------------------------
+
+async def handle_stream(token: str, media_type: str, item_id: str, request: Request):
+    if ADULT_ONLY or media_type == "porn" or item_id.startswith("stash_") or item_id.startswith("stash:") or item_id.startswith("stashdb_") or item_id.startswith("stashdb:") or is_uuid_str(item_id):
         target_type = "porn"
     elif media_type == "series":
         target_type = "series"
@@ -496,11 +575,9 @@ async def get_stream(media_type: str, item_id: str, request: Request):
         target_type = "movie"
 
     videos = await get_streams_by_id(item_id, target_type)
-
     if not videos:
         return {"streams": []}
 
-    # Dynamically determine the base URL so mobile devices on Wi-Fi/LAN can reach it!
     host = request.headers.get("x-forwarded-host") or request.headers.get("host")
     if host and "127.0.0.1" not in host and "localhost" not in host:
         proto = request.headers.get("x-forwarded-proto", request.url.scheme)
@@ -511,11 +588,12 @@ async def get_stream(media_type: str, item_id: str, request: Request):
         base_url = f"http://192.168.1.16:{SERVER_PORT}"
 
     streams = []
+    default_badge = "[Teleflux Red ⚡] " if ADULT_ONLY else "[Teleflux ⚡] "
     for v in videos:
         safe_name = quote(v["file_name"])
-        play_url = f"{base_url}/play/{v['chat_id']}/{v['message_id']}/{safe_name}"
+        play_url = f"{base_url}/{token}/play/{v['chat_id']}/{v['message_id']}/{safe_name}"
 
-        badge = v.get("stream_badge") or f"[Telegram ⚡] {v.get('resolution') or 'HD'}"
+        badge = v.get("stream_badge") or f"{default_badge}{v.get('resolution') or 'HD'}"
         desc = v.get("stream_desc")
         if not desc:
             size_gb = round(v["file_size"] / (1024 ** 3), 2)
@@ -529,9 +607,20 @@ async def get_stream(media_type: str, item_id: str, request: Request):
 
     return {"streams": streams}
 
-# OPTIONS pre-flight handler for mobile players (ExoPlayer / VLC / Stremio Mobile)
-@app.options("/play/{chat_id}/{message_id}/{filename}")
-async def options_stream(chat_id: int, message_id: int, filename: str):
+@app.get("/{token}/stream/{media_type}/{item_id}.json")
+async def get_secure_stream(token: str, media_type: str, item_id: str, request: Request):
+    verify_security_token(token)
+    return await handle_stream(token, media_type, item_id, request)
+
+@app.get("/stream/{media_type}/{item_id}.json")
+async def get_stream_unauthorized(media_type: str, item_id: str):
+    raise HTTPException(status_code=403, detail="Forbidden: Security token required.")
+
+# ---------------------------------------------------------------------
+# Protected Video Streaming Endpoints (HTTP 206 Partial Content)
+# ---------------------------------------------------------------------
+
+async def handle_options_stream():
     headers = {
         "Access-Control-Allow-Origin": "*",
         "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
@@ -541,9 +630,7 @@ async def options_stream(chat_id: int, message_id: int, filename: str):
     }
     return Response(status_code=200, headers=headers)
 
-# HEAD probe endpoint for players checking file size & range support
-@app.head("/play/{chat_id}/{message_id}/{filename}")
-async def probe_stream(chat_id: int, message_id: int, filename: str):
+async def handle_probe_stream(chat_id: int, message_id: int, filename: str):
     video = await get_video_by_location(chat_id, message_id)
     if not video:
         raise HTTPException(status_code=404, detail="Video not found")
@@ -559,9 +646,7 @@ async def probe_stream(chat_id: int, message_id: int, filename: str):
     }
     return Response(status_code=200, headers=headers)
 
-# HTTP 206 Partial Content Streamer for ExoPlayer / MPV / VLC / Stremio
-@app.get("/play/{chat_id}/{message_id}/{filename}")
-async def play_stream(chat_id: int, message_id: int, filename: str, request: Request):
+async def handle_play_stream(chat_id: int, message_id: int, filename: str, request: Request):
     video = await get_video_by_location(chat_id, message_id)
     if not video:
         raise HTTPException(status_code=404, detail="Video not found in library")
@@ -658,6 +743,32 @@ async def play_stream(chat_id: int, message_id: int, filename: str, request: Req
         stream_telegram_file(chat_id, message_id, offset=start, length=content_length),
         status_code=206,
         headers=headers
+    )
+
+# Protected playback routes
+@app.options("/{token}/play/{chat_id}/{message_id}/{filename}")
+async def options_secure_stream(token: str, chat_id: int, message_id: int, filename: str):
+    verify_security_token(token)
+    return await handle_options_stream()
+
+@app.head("/{token}/play/{chat_id}/{message_id}/{filename}")
+async def probe_secure_stream(token: str, chat_id: int, message_id: int, filename: str):
+    verify_security_token(token)
+    return await handle_probe_stream(chat_id, message_id, filename)
+
+@app.get("/{token}/play/{chat_id}/{message_id}/{filename}")
+async def play_secure_stream(token: str, chat_id: int, message_id: int, filename: str, request: Request):
+    verify_security_token(token)
+    return await handle_play_stream(chat_id, message_id, filename, request)
+
+# Block unauthorized direct playback without token
+@app.options("/play/{chat_id}/{message_id}/{filename}")
+@app.head("/play/{chat_id}/{message_id}/{filename}")
+@app.get("/play/{chat_id}/{message_id}/{filename}")
+async def play_unauthorized():
+    raise HTTPException(
+        status_code=403,
+        detail="Forbidden: Security token required for video playback. Install your personalized addon manifest from the dashboard."
     )
 
 @app.get("/stats")

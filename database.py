@@ -1,37 +1,51 @@
 import os
+import re
 import time
 import aiosqlite
 from config import DATA_DIR, PUBLIC_URL
 
 DB_FILE = os.path.join(DATA_DIR, "library.db")
 
+def is_uuid_str(val: str) -> bool:
+    clean = str(val).strip()
+    return bool(re.match(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$', clean)) or \
+           bool(re.match(r'^[0-9a-fA-F]{32}$', clean))
+
 def parse_stremio_id(item_id: str):
     """
     Safely parses Stremio ID formats:
       - 'stash_12345' / 'stash:12345' -> ("stash", 'stash_12345', None, None)
+      - 'stashdb_12345' / 'stashdb:12345' -> ("stash", 'stash_12345', None, None)
+      - '01a1b034-095c-7781-b0b7-ac3519d83112' (UUID) -> ("stash", 'stash_01a1b034-095c-7781-b0b7-ac3519d83112', None, None)
       - 'tt1234567' -> ("imdb", 'tt1234567', None, None)
       - 'tt1234567:1:2' -> ("imdb", 'tt1234567', 1, 2)
       - 'tmdb:1032906' -> ("tmdb", 1032906, None, None)
       - 'tmdb:1032906:1:2' -> ("tmdb", 1032906, 1, 2)
     """
-    if item_id.startswith("stash_") or item_id.startswith("stash:"):
-        clean_id = item_id.replace("stash:", "stash_")
+    item_str = str(item_id).strip()
+    if item_str.startswith("stash_") or item_str.startswith("stash:"):
+        clean_id = item_str.replace("stash:", "stash_")
         return "stash", clean_id, None, None
-    elif item_id.startswith("tmdb:"):
-        rest = item_id[5:]
+    elif item_str.startswith("stashdb_") or item_str.startswith("stashdb:"):
+        clean_id = "stash_" + item_str.replace("stashdb:", "").replace("stashdb_", "")
+        return "stash", clean_id, None, None
+    elif is_uuid_str(item_str):
+        return "stash", f"stash_{item_str}", None, None
+    elif item_str.startswith("tmdb:"):
+        rest = item_str[5:]
         parts = rest.split(":")
         tmdb_id = int(parts[0]) if parts[0].isdigit() else 0
         season = int(parts[1]) if len(parts) >= 2 and parts[1].isdigit() else None
         episode = int(parts[2]) if len(parts) >= 3 and parts[2].isdigit() else None
         return "tmdb", tmdb_id, season, episode
-    elif item_id.startswith("tt"):
-        parts = item_id.split(":")
+    elif item_str.startswith("tt"):
+        parts = item_str.split(":")
         imdb_id = parts[0]
         season = int(parts[1]) if len(parts) >= 2 and parts[1].isdigit() else None
         episode = int(parts[2]) if len(parts) >= 3 and parts[2].isdigit() else None
         return "imdb", imdb_id, season, episode
     else:
-        parts = item_id.split(":")
+        parts = item_str.split(":")
         val = int(parts[0]) if parts[0].isdigit() else 0
         season = int(parts[1]) if len(parts) >= 2 and parts[1].isdigit() else None
         episode = int(parts[2]) if len(parts) >= 3 and parts[2].isdigit() else None
@@ -263,9 +277,9 @@ async def get_meta_by_id(item_id: str, media_type: str) -> dict | None:
         id_type, id_val, season, episode = parse_stremio_id(item_id)
 
         if id_type == "stash" or media_type == "porn":
-            raw_uuid = str(id_val).replace("stash_", "")
-            query = "SELECT * FROM videos WHERE (stash_id = ? OR stash_id = ?) AND media_type = 'porn' ORDER BY id DESC LIMIT 1"
-            params = (str(id_val), raw_uuid)
+            raw_uuid = str(id_val).replace("stash_", "").replace("stash:", "").replace("stashdb_", "").replace("stashdb:", "").strip()
+            query = "SELECT * FROM videos WHERE (stash_id = ? OR stash_id = ? OR stash_id = ?) AND media_type = 'porn' ORDER BY id DESC LIMIT 1"
+            params = (str(item_id), f"stash_{raw_uuid}", raw_uuid)
         elif id_type == "imdb":
             query = f"SELECT * FROM videos WHERE imdb_id = ? AND media_type = ? ORDER BY id DESC LIMIT 1"
             params = (id_val, media_type)
@@ -322,7 +336,7 @@ async def get_streams_by_id(item_id: str, media_type: str) -> list[dict]:
         id_type, id_val, season, episode = parse_stremio_id(item_id)
 
         if id_type == "stash" or media_type == "porn":
-            raw_uuid = str(id_val).replace("stash_", "")
+            raw_uuid = str(id_val).replace("stash_", "").replace("stash:", "").replace("stashdb_", "").replace("stashdb:", "").strip()
             query = """
                 SELECT * FROM videos 
                 WHERE (stash_id = ? OR stash_id = ? OR stash_id = ?) AND media_type = 'porn'
@@ -358,34 +372,60 @@ async def get_streams_by_id(item_id: str, media_type: str) -> list[dict]:
                 seen_signatures.add(sig)
                 unique_videos.append(v)
 
-            # Auto-healing fallback for StashDB scenes:
-            # If not matched directly by UUID, resolve scene title via StashDB and match by filename/title
-            if not unique_videos and (id_type == "stash" or media_type == "porn"):
+            # Strict auto-healing fallback for StashDB scenes:
+            # If not matched directly by UUID, fetch scene metadata from StashDB by UUID.
+            # Match ONLY if an unlinked local video (no valid remote UUID yet) has the EXACT scene title
+            # and matching date. NEVER do loose substring, partial, or wildcard matching!
+            if not unique_videos and (id_type == "stash" or media_type == "porn") and raw_uuid and not raw_uuid.startswith("local_"):
                 try:
-                    from stashdb import get_stashdb_scene_by_id
+                    from stashdb import get_stashdb_scene_by_id, normalize_scene_title, extract_scene_title_and_date
                     scene_meta = await get_stashdb_scene_by_id(raw_uuid)
                     if scene_meta and scene_meta.get("title"):
-                        s_title = scene_meta["title"].strip()
-                        query_fallback = """
+                        target_title = scene_meta["title"].strip()
+                        target_norm = normalize_scene_title(target_title)
+                        target_date = (scene_meta.get("date") or "").strip()
+
+                        # ONLY inspect unlinked videos (stash_id is NULL, empty, or stash_local_*)
+                        # NEVER overwrite or touch videos already linked to a real StashDB UUID!
+                        query_unlinked = """
                             SELECT * FROM videos 
                             WHERE media_type = 'porn' 
-                              AND (LOWER(title) = LOWER(?) OR LOWER(file_name) LIKE LOWER(?))
+                              AND (stash_id IS NULL OR stash_id = '' OR stash_id LIKE 'stash_local_%')
                             ORDER BY file_size DESC
                         """
-                        async with db.execute(query_fallback, (s_title, f"%{s_title}%")) as fallback_cur:
-                            fb_rows = await fallback_cur.fetchall()
-                            for r in fb_rows:
+                        async with db.execute(query_unlinked) as unlinked_cur:
+                            cand_rows = await unlinked_cur.fetchall()
+                            matched_ids = []
+                            for r in cand_rows:
                                 v = dict(r)
+                                fn_title, fn_date = extract_scene_title_and_date(v["file_name"])
+                                v_title = v.get("title") or ""
+                                
+                                # Strict title match check (normalized)
+                                title_match = (
+                                    normalize_scene_title(fn_title) == target_norm or
+                                    normalize_scene_title(v_title) == target_norm
+                                )
+                                if not title_match:
+                                    continue
+                                
+                                # Strict date match check:
+                                # If both the StashDB scene and the file specify a date, they MUST match.
+                                if target_date and fn_date:
+                                    if fn_date != target_date:
+                                        continue
+
                                 sig = (v["file_name"], v["file_size"])
                                 if sig not in seen_signatures:
                                     seen_signatures.add(sig)
                                     unique_videos.append(v)
-                            if fb_rows:
-                                await db.execute("""
-                                    UPDATE videos SET stash_id = ? 
-                                    WHERE media_type = 'porn' 
-                                      AND (LOWER(title) = LOWER(?) OR LOWER(file_name) LIKE LOWER(?))
-                                """, (f"stash_{raw_uuid}", s_title, f"%{s_title}%"))
+                                    matched_ids.append(v["id"])
+
+                            # Safely bind ONLY the verified matching video rows to this UUID
+                            if matched_ids:
+                                placeholders = ",".join("?" * len(matched_ids))
+                                update_sql = f"UPDATE videos SET stash_id = ? WHERE id IN ({placeholders})"
+                                await db.execute(update_sql, [f"stash_{raw_uuid}"] + matched_ids)
                                 await db.commit()
                 except Exception as fb_err:
                     print(f"[Notice] Stash on-demand stream resolution note: {fb_err}")

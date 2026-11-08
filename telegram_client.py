@@ -15,7 +15,7 @@ from telethon.errors import FloodWaitError
 from config import DATA_DIR, CHUNK_SIZE_BYTES, ADULT_ONLY
 from database import upsert_video
 from tmdb import lookup_tmdb, parse_filename, extract_media_specs, format_stremio_stream
-from stashdb import search_stashdb_scene, format_stashdb_stream, clean_stash_filename
+from stashdb import search_stashdb_scene, format_stashdb_stream, clean_stash_filename, extract_filename_date, extract_scene_title_and_date
 from settings_manager import load_settings
 
 VIDEO_EXTENSIONS = (
@@ -477,21 +477,25 @@ async def index_single_message(chat_id: int, message):
             stash_scene = await search_stashdb_scene(meta["file_name"], meta["caption"], api_key=stash_key)
 
         if not stash_scene:
-            c_title = clean_stash_filename(meta["file_name"])
+            c_title, date_hint = extract_scene_title_and_date(meta["file_name"])
+            year_hint = int(date_hint[:4]) if date_hint and len(date_hint) >= 4 and date_hint[:4].isdigit() else None
             stash_scene = {
                 "stash_id": f"stash_local_{message.id}",
                 "media_type": "porn",
                 "title": c_title,
-                "year": None,
+                "year": year_hint,
+                "date": date_hint,
                 "poster": None,
                 "backdrop": None,
-                "overview": f"Adult Scene: {c_title}",
+                "overview": f"Adult Scene: {c_title}" + (f"\nRelease Date: {date_hint}" if date_hint else ""),
                 "genres": ["Adult"],
                 "rating": 0.0
             }
 
         header = stash_scene["title"]
-        if stash_scene.get("year"):
+        if stash_scene.get("date"):
+            header += f" ({stash_scene['date']})"
+        elif stash_scene.get("year"):
             header += f" ({stash_scene['year']})"
 
         badge, desc = format_stashdb_stream(header, specs)

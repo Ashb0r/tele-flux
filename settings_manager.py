@@ -1,5 +1,6 @@
 import os
 import json
+import secrets
 from config import DATA_DIR
 
 SETTINGS_FILE = os.path.join(DATA_DIR, "settings.json")
@@ -13,7 +14,8 @@ DEFAULT_SETTINGS = {
     "channel_ids": [],              # Streaming channels (strictly for Stremio)
     "login_mode": "bot",
     "session_string": "",
-    "configured": False
+    "configured": False,
+    "security_token": ""            # URL protection security token
 }
 
 def load_settings() -> dict:
@@ -72,6 +74,21 @@ def load_settings() -> dict:
     else:
         settings["channel_ids"] = []
 
+    # Ensure security_token exists
+    if not settings.get("security_token"):
+        settings["security_token"] = secrets.token_hex(16)
+        try:
+            os.makedirs(DATA_DIR, exist_ok=True)
+            saved = {}
+            if os.path.exists(SETTINGS_FILE):
+                with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+                    saved = json.load(f)
+            saved["security_token"] = settings["security_token"]
+            with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
+                json.dump(saved, f, indent=2)
+        except Exception as e:
+            print(f"[Warning] Failed to persist generated security_token: {e}")
+
     # Determine if configuration has valid credentials
     has_creds = bool(
         settings.get("api_id")
@@ -100,6 +117,11 @@ def save_settings(new_settings: dict) -> dict:
         json.dump(current, f, indent=2)
 
     return current
+
+def regenerate_security_token() -> str:
+    new_token = secrets.token_hex(16)
+    save_settings({"security_token": new_token})
+    return new_token
 
 def reset_settings() -> dict:
     os.makedirs(DATA_DIR, exist_ok=True)

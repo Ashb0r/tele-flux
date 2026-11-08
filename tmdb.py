@@ -376,7 +376,7 @@ def generate_poster_svg(title: str, media_type: str, year: int | None = None) ->
   {year_element}
 
   <line x1="150" y1="670" x2="350" y2="670" stroke="#2e344e" stroke-width="1"/>
-  <text x="250" y="700" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif" font-size="13" font-weight="bold" fill="#64748b" text-anchor="middle" letter-spacing="2">TELEGRAM LIBRARY TV</text>
+  <text x="250" y="700" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif" font-size="13" font-weight="bold" fill="#64748b" text-anchor="middle" letter-spacing="2">TELEFLUX</text>
 </svg>"""
 
 def format_file_size(size_bytes: int) -> str:
@@ -594,7 +594,7 @@ def format_stremio_stream(title_header: str, specs: dict) -> tuple[str, str]:
     Returns (name_badge, full_description)
     """
     res = specs.get("resolution") or "HD"
-    name_badge = f"[Telegram ⚡] {res}"
+    name_badge = f"[Teleflux ⚡] {res}"
 
     lines = [f"📁 {title_header}"]
 
