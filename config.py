@@ -27,14 +27,16 @@ ADULT_ONLY = os.getenv("ADULT_ONLY", "False").strip().lower() in ("true", "1", "
 STASHDB_API_KEY = os.getenv("STASHDB_API_KEY", "")
 STASHDB_GRAPHQL_URL = os.getenv("STASHDB_GRAPHQL_URL", "https://stashdb.org/graphql")
 
-# High-Performance Streaming Engine Configuration (hardcoded for optimal buffer-free streaming)
-# 1 MB (1024 KB) chunk size is the native MTProto transfer quantum maximizing DC line-rate
-STREAM_BLOCK_SIZE_KB = 1024
+# High-Performance Streaming Engine Configuration
+# 512 KB (524,288 bytes) is the EXACT maximum wire limit for Telegram MTProto upload.getFile RPCs.
+# Matching this quantum ensures Telethon uses direct zero-buffer direct downloads with zero chunk truncation.
+STREAM_BLOCK_SIZE_KB = 512
 STREAM_BLOCK_SIZE_BYTES = STREAM_BLOCK_SIZE_KB * 1024
 CHUNK_SIZE_KB = STREAM_BLOCK_SIZE_KB
 CHUNK_SIZE_BYTES = STREAM_BLOCK_SIZE_BYTES
 
 # Concurrency & Scheduler Tuning
+STREAM_CLIENT_POOL_SIZE = int(os.getenv("STREAM_CLIENT_POOL_SIZE", "4"))
 STREAM_PARALLEL_CONNECTIONS = 8
 STREAM_GLOBAL_MAX_REQUESTS = 32
 
@@ -45,7 +47,7 @@ STREAM_DISK_CACHE_DIR = os.getenv("STREAM_DISK_CACHE_DIR", os.path.join(DATA_DIR
 STREAM_DISK_CACHE_MAX_GB = int(os.getenv("STREAM_DISK_CACHE_MAX_GB", "20"))
 
 # Dynamic Read-Ahead & Idle Buffer Pipeline
-STREAM_PREFETCH_MIN_MB = 16
-STREAM_PREFETCH_MAX_MB = 64
-STREAM_PAUSE_PREFETCH_MAX_MB = int(os.getenv("STREAM_PAUSE_PREFETCH_MAX_MB", "1024"))  # Up to 1 GB idle prefetch
+STREAM_PREFETCH_MIN_MB = 8
+STREAM_PREFETCH_MAX_MB = 32
+STREAM_PAUSE_PREFETCH_MAX_MB = int(os.getenv("STREAM_PAUSE_PREFETCH_MAX_MB", "512"))  # Up to 1 GB idle prefetch
 STREAM_MAX_ACTIVE_STREAMS = 8

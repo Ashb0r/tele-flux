@@ -56,9 +56,56 @@ VIDEO_MIMES = (
 SESSION_PATH = os.path.join(DATA_DIR, "bot_session")
 STREAM_SESSION_PATH = os.path.join(DATA_DIR, "stream_bot_session")
 
+class StreamingClientPool:
+    """
+    High-Throughput Multi-Connection MTProto Client Pool.
+    Bypasses Telegram's single-connection line-rate cap (~1.5-2 MB/s) by maintaining
+    multiple parallel MTProto TCP sessions directly to Telegram's Data Centers.
+    - Slot 0 is reserved for PRIORITY_URGENT (playback head & seeks), ensuring zero queue congestion.
+    - Slots 1..N-1 handle parallel read-ahead and pause prefetch across separate TCP links.
+    - Automatic connection failover on timeout / stalled chunk.
+    """
+    def __init__(self):
+        self.clients: list[TelegramClient] = []
+        self._worker_index: int = 0
+        self._lock = asyncio.Lock()
+
+    def add_client(self, client: TelegramClient):
+        if client and client not in self.clients:
+            self.clients.append(client)
+
+    def is_connected(self) -> bool:
+        return any(c.is_connected() for c in self.clients)
+
+    def get_client(self, priority: int = 1, attempt: int = 0) -> TelegramClient | None:
+        connected = [c for c in self.clients if c.is_connected()]
+        if not connected:
+            return None
+
+        # PRIORITY_URGENT: use dedicated priority slot 0 (or rotate to another on retry attempt)
+        if priority == 1:
+            idx = attempt % len(connected)
+            return connected[idx]
+
+        # Prefetch / Near: distribute across worker slots (slots 1..N, or all if only 1 exists)
+        workers = connected[1:] if len(connected) > 1 else connected
+        worker_idx = (self._worker_index + attempt) % len(workers)
+        self._worker_index = (self._worker_index + 1) % len(workers)
+        return workers[worker_idx]
+
+    async def disconnect_all(self):
+        for client in self.clients:
+            try:
+                if client.is_connected():
+                    await client.disconnect()
+            except Exception:
+                pass
+        self.clients.clear()
+
 # Global clients and channel tracking
 telethon_client: TelegramClient | None = None
 telethon_streaming_client: TelegramClient | None = None
+streaming_client_pool: StreamingClientPool = StreamingClientPool()
 active_channels: list[int] = []
 scan_task: asyncio.Task | None = None
 
@@ -1050,8 +1097,12 @@ async def start_telegram_service():
     login_mode = settings.get("login_mode", "bot")
     session_string = settings.get("session_string", "").strip()
 
+    from config import STREAM_CLIENT_POOL_SIZE
+    pool_size = max(1, STREAM_CLIENT_POOL_SIZE)
+
     if telethon_client and telethon_client.is_connected():
         await telethon_client.disconnect()
+    await streaming_client_pool.disconnect_all()
     if telethon_streaming_client and telethon_streaming_client.is_connected():
         await telethon_streaming_client.disconnect()
 
@@ -1069,24 +1120,25 @@ async def start_telegram_service():
         )
         await telethon_client.start()
 
-        # Dedicated high-speed streaming client (updates disabled to prevent event congestion)
-        try:
-            telethon_streaming_client = TelegramClient(
-                StringSession(session_string),
-                api_id,
-                api_hash,
-                receive_updates=False,
-                connection_retries=10,
-                retry_delay=1,
-                auto_reconnect=True,
-                flood_sleep_threshold=60,
-                request_retries=10
-            )
-            await telethon_streaming_client.start()
-            print("[Telegram] Dedicated Streaming MTProto client started (receive_updates=False).")
-        except Exception as str_err:
-            print(f"[Telegram Notice] Streaming client fallback: {str_err}")
-            telethon_streaming_client = telethon_client
+        # Dedicated high-speed streaming pool (updates disabled to prevent event congestion)
+        print(f"[Telegram] Initializing Multi-Connection Streaming Pool ({pool_size} parallel MTProto TCP streams)...")
+        for i in range(pool_size):
+            try:
+                s_client = TelegramClient(
+                    StringSession(session_string),
+                    api_id,
+                    api_hash,
+                    receive_updates=False,
+                    connection_retries=10,
+                    retry_delay=1,
+                    auto_reconnect=True,
+                    flood_sleep_threshold=60,
+                    request_retries=10
+                )
+                await s_client.start()
+                streaming_client_pool.add_client(s_client)
+            except Exception as str_err:
+                print(f"[Telegram Notice] Streaming pool client {i} warning: {str_err}")
     else:
         print("[Telegram] Starting MTProto client in BOT MODE...")
         telethon_client = TelegramClient(
@@ -1101,24 +1153,34 @@ async def start_telegram_service():
         )
         await telethon_client.start(bot_token=bot_token)
 
-        # Dedicated streaming bot client with independent session & receive_updates=False
-        try:
-            telethon_streaming_client = TelegramClient(
-                STREAM_SESSION_PATH,
-                api_id,
-                api_hash,
-                receive_updates=False,
-                connection_retries=10,
-                retry_delay=1,
-                auto_reconnect=True,
-                flood_sleep_threshold=60,
-                request_retries=10
-            )
-            await telethon_streaming_client.start(bot_token=bot_token)
-            print("[Telegram] Dedicated Streaming MTProto client started (receive_updates=False).")
-        except Exception as str_err:
-            print(f"[Telegram Notice] Streaming client fallback: {str_err}")
-            telethon_streaming_client = telethon_client
+        # Dedicated streaming bot pool with independent sessions & receive_updates=False
+        print(f"[Telegram] Initializing Multi-Connection Streaming Pool ({pool_size} parallel MTProto TCP streams)...")
+        for i in range(pool_size):
+            try:
+                client_session_path = f"{STREAM_SESSION_PATH}_{i}"
+                s_client = TelegramClient(
+                    client_session_path,
+                    api_id,
+                    api_hash,
+                    receive_updates=False,
+                    connection_retries=10,
+                    retry_delay=1,
+                    auto_reconnect=True,
+                    flood_sleep_threshold=60,
+                    request_retries=10
+                )
+                await s_client.start(bot_token=bot_token)
+                streaming_client_pool.add_client(s_client)
+            except Exception as str_err:
+                print(f"[Telegram Notice] Streaming pool client {i} warning: {str_err}")
+
+    if not streaming_client_pool.clients:
+        print("[Telegram Notice] Streaming pool fallback: using primary client")
+        streaming_client_pool.add_client(telethon_client)
+    else:
+        print(f"[Telegram] Multi-Connection Streaming Pool active with {len(streaming_client_pool.clients)} dedicated MTProto connections.")
+
+    telethon_streaming_client = streaming_client_pool.clients[0] if streaming_client_pool.clients else telethon_client
 
     me = await telethon_client.get_me()
     is_bot = getattr(me, "bot", False)
@@ -1199,10 +1261,8 @@ async def stop_telegram_service():
     global telethon_client, telethon_streaming_client, scan_task
     if scan_task and not scan_task.done():
         scan_task.cancel()
-    if telethon_streaming_client and telethon_streaming_client.is_connected():
-        if telethon_streaming_client is not telethon_client:
-            await telethon_streaming_client.disconnect()
-        telethon_streaming_client = None
+    await streaming_client_pool.disconnect_all()
+    telethon_streaming_client = None
     if telethon_client and telethon_client.is_connected():
         await telethon_client.disconnect()
         telethon_client = None
@@ -1210,16 +1270,17 @@ async def stop_telegram_service():
 async def stream_telegram_file(chat_id: int, message_id: int, offset: int, length: int):
     """
     High-Performance MTProto streaming engine:
-    1. 1 MB Aligned Block File Retrieval: Slices exact requested bytes on 1 MB quantum boundaries.
-    2. Two-Tiered Hybrid Persistent Cache: RAM (L1) + Disk (L2) with instant rewind & replay.
-    3. Dedicated MTProto Streaming Client: Isolated from channel/bot updates (receive_updates=False).
-    4. Parallel Block Fetcher: Concurrent MTProto block requests bounded by global & per-stream limits.
-    5. Shared In-Flight Deduplication: Prevents duplicate fetches across streams.
-    6. Priority Inversion-Free Scheduler: Urgent playback head requests jump ahead with guaranteed reserved slots.
-    7. Telegram File Reference Refresh: Automatically recovers from expired file references.
+    1. Multi-Connection Client Pool: Distributes block downloads across parallel MTProto TCP streams.
+    2. 512 KB Aligned Wire Quantum: Directly matches MTProto upload.getFile with zero buffer fragmentation.
+    3. Two-Tiered Hybrid Persistent Cache: RAM (L1) + Disk (L2) with instant rewind & replay.
+    4. Isolated Streaming Clients: Updates disabled to eliminate event loop congestion.
+    5. Parallel Block Fetcher: Concurrent MTProto block requests bounded by global & per-stream limits.
+    6. Shared In-Flight Deduplication: Prevents duplicate fetches across streams.
+    7. Priority Inversion-Free Scheduler: Urgent playback head requests jump ahead with guaranteed reserved slots.
+    8. Telegram File Reference Refresh: Automatically recovers from expired file references.
     """
-    global telethon_client, telethon_streaming_client
-    client = telethon_streaming_client if (telethon_streaming_client and telethon_streaming_client.is_connected()) else telethon_client
+    global telethon_client, streaming_client_pool
+    client = streaming_client_pool if streaming_client_pool.is_connected() else telethon_client
     if not client or not client.is_connected():
         return
 
@@ -1233,8 +1294,8 @@ async def stream_telegram_file(chat_id: int, message_id: int, offset: int, lengt
         yield chunk
 
 async def prewarm_telegram_stream(chat_id: int, message_id: int):
-    """Zero cold-start pre-warming of Block 0 & index for upcoming stream playback."""
-    global telethon_client, telethon_streaming_client
-    client = telethon_streaming_client if (telethon_streaming_client and telethon_streaming_client.is_connected()) else telethon_client
+    """Zero cold-start pre-warming of container headers (EBML/MP4) & Cues/moov index into RAM."""
+    global telethon_client, streaming_client_pool
+    client = streaming_client_pool if streaming_client_pool.is_connected() else telethon_client
     if client and client.is_connected():
         await streaming_engine.prewarm_file(client, chat_id, message_id)

@@ -71,11 +71,14 @@ class UltraStreamingTestSuite:
     def assertIn(self, a, b, msg=None):
         assert a in b, f"Expected {a} in {b} {msg or ''}"
 
-    # 1. 1 MB Quantum Verification
+    def assertNotEqual(self, a, b, msg=None):
+        assert a != b, f"Expected {a} != {b} {msg or ''}"
+
+    # 1. 512 KB MTProto Quantum Verification
     async def test_01_block_size_is_1mb(self):
-        self.assertEqual(STREAM_BLOCK_SIZE_KB, 1024)
-        self.assertEqual(STREAM_BLOCK_SIZE_BYTES, 1048576)
-        print("[PASS] Test 1: Native 1 MB (1,048,576 byte) MTProto quantum verified.")
+        self.assertEqual(STREAM_BLOCK_SIZE_KB, 512)
+        self.assertEqual(STREAM_BLOCK_SIZE_BYTES, 524288)
+        print("[PASS] Test 1: Native 512 KB MTProto quantum verified.")
 
     # 2. Accurate MIME Type Derivation
     async def test_02_mime_type_derivation(self):
@@ -95,6 +98,8 @@ class UltraStreamingTestSuite:
 
         # Put block in cache
         await self.cache.put(doc_id, access_hash, block_idx, payload)
+        # Give non-blocking background disk persistence a moment to complete
+        await asyncio.sleep(0.05)
 
         # 1. RAM Hit
         ram_val = await self.cache.get(doc_id, access_hash, block_idx)
@@ -210,8 +215,9 @@ class UltraStreamingTestSuite:
         mock_doc.access_hash = 888
         mock_doc.size = 10 * STREAM_BLOCK_SIZE_BYTES
 
-        mock_client = AsyncMock()
+        mock_client = MagicMock()
         mock_client.is_connected = MagicMock(return_value=True)
+        del mock_client.get_client
 
         async def mock_iter(file, offset=0, **kwargs):
             yield b"H" * STREAM_BLOCK_SIZE_BYTES
@@ -225,7 +231,47 @@ class UltraStreamingTestSuite:
         from streaming_engine import block_cache
         has_b0 = block_cache.has_block(mock_doc.id, mock_doc.access_hash, 0)
         self.assertTrue(has_b0)
-        print("[PASS] Test 7: Cold-start Pre-Warming of Block 0 verified.")
+        print("[PASS] Test 7: Cold-start Pre-Warming of container headers and index verified.")
+
+    # 8. Multi-Connection MTProto Client Pool
+    async def test_08_multi_connection_client_pool(self):
+        from telegram_client import StreamingClientPool
+        pool = StreamingClientPool()
+
+        c0 = MagicMock()
+        c0.is_connected = MagicMock(return_value=True)
+        c0.id = "urgent_0"
+
+        c1 = MagicMock()
+        c1.is_connected = MagicMock(return_value=True)
+        c1.id = "worker_1"
+
+        c2 = MagicMock()
+        c2.is_connected = MagicMock(return_value=True)
+        c2.id = "worker_2"
+
+        pool.add_client(c0)
+        pool.add_client(c1)
+        pool.add_client(c2)
+
+        self.assertTrue(pool.is_connected())
+
+        # PRIORITY_URGENT must pick dedicated slot 0
+        u_client = pool.get_client(priority=PRIORITY_URGENT, attempt=0)
+        self.assertEqual(u_client.id, "urgent_0")
+
+        # PRIORITY_URGENT retry must failover to alternate client
+        u_retry = pool.get_client(priority=PRIORITY_URGENT, attempt=1)
+        self.assertEqual(u_retry.id, "worker_1")
+
+        # Prefetch must distribute across workers
+        p1 = pool.get_client(priority=PRIORITY_PREFETCH)
+        p2 = pool.get_client(priority=PRIORITY_PREFETCH)
+        self.assertIn(p1.id, ["worker_1", "worker_2"])
+        self.assertIn(p2.id, ["worker_1", "worker_2"])
+        self.assertNotEqual(p1.id, p2.id)
+
+        print("[PASS] Test 8: Multi-Connection MTProto Client Pool (Urgent isolation & worker distribution) verified.")
 
 
 async def main():
@@ -242,8 +288,9 @@ async def main():
         await suite.test_05_last_playback_request_wins()
         await suite.test_06_video_location_cache()
         await suite.test_07_prewarm_stream()
+        await suite.test_08_multi_connection_client_pool()
         print("=" * 60)
-        print("  ALL 7 ULTRA-STREAMING TESTS PASSED!")
+        print("  ALL 8 ULTRA-STREAMING TESTS PASSED!")
         print("=" * 60)
     finally:
         await suite.asyncTearDown()

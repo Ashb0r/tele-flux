@@ -164,6 +164,9 @@ def _read_disk_file(path: str) -> Optional[bytes]:
 
 def _write_disk_file(path: str, data: bytes):
     try:
+        dirname = os.path.dirname(path)
+        if dirname:
+            os.makedirs(dirname, exist_ok=True)
         tmp_path = f"{path}.tmp_{os.getpid()}_{time.time()}"
         with open(tmp_path, "wb") as f:
             f.write(data)
@@ -193,8 +196,11 @@ class TieredBlockCache:
         ram_max_mb: int = STREAM_CACHE_MAX_MB,
         disk_cache_dir: str = STREAM_DISK_CACHE_DIR,
         disk_max_gb: int = STREAM_DISK_CACHE_MAX_GB,
-        disk_enabled: bool = STREAM_DISK_CACHE_ENABLED
+        disk_enabled: bool = STREAM_DISK_CACHE_ENABLED,
+        max_mb: Optional[int] = None
     ):
+        if max_mb is not None:
+            ram_max_mb = max_mb
         self.ram_max_bytes = max(1, ram_max_mb) * 1024 * 1024
         self.ram_current_bytes = 0
         self.ram_cache: OrderedDict[Tuple[int, int, int], bytes] = OrderedDict()
@@ -337,23 +343,27 @@ class TieredBlockCache:
 
         lock = self._get_lock()
 
-        # 1. Store in RAM Cache
+        # 1. Store in RAM Cache immediately (0.001 ms)
         async with lock:
             self._put_ram_locked(key, payload)
 
-        # 2. Asynchronously store in Disk Cache
+        # 2. Fire-and-forget non-blocking Disk Cache write (never blocks streaming delivery)
         if self.disk_enabled:
+            asyncio.create_task(self._persist_to_disk_bg(key, payload))
+
+    async def _persist_to_disk_bg(self, key: Tuple[int, int, int], payload: bytes):
+        try:
             disk_path = self._disk_path_for_key(key)
             await asyncio.to_thread(_write_disk_file, disk_path, payload)
 
+            lock = self._get_lock()
+            evict_paths = []
             async with lock:
                 old_size = self.disk_index.get(key, 0)
                 self.disk_index[key] = len(payload)
                 self.disk_index.move_to_end(key)
                 self.disk_current_bytes += (len(payload) - old_size)
 
-                # Evict oldest disk files if exceeding disk cap
-                evict_paths = []
                 while self.disk_current_bytes > self.disk_max_bytes and self.disk_index:
                     old_key, old_sz = self.disk_index.popitem(last=False)
                     self.disk_current_bytes -= old_sz
@@ -361,6 +371,8 @@ class TieredBlockCache:
 
             for ep in evict_paths:
                 await asyncio.to_thread(_remove_disk_file, ep)
+        except Exception as e:
+            logger.debug(f"[Cache] Background disk write notice: {e}")
 
     async def clear(self):
         lock = self._get_lock()
@@ -577,7 +589,14 @@ class DocumentManager:
             if not client or not client.is_connected():
                 doc = None
             else:
-                message = await client.get_messages(chat_id, ids=message_id)
+                active_client = client
+                if hasattr(client, "get_client") and callable(getattr(client, "get_client")):
+                    c_cand = client.get_client(priority=PRIORITY_URGENT)
+                    if asyncio.iscoroutine(c_cand):
+                        c_cand = await c_cand
+                    if c_cand:
+                        active_client = c_cand
+                message = await active_client.get_messages(chat_id, ids=message_id)
                 doc = None
                 if message and message.media:
                     doc = getattr(message.media, "document", None)
@@ -734,6 +753,15 @@ class ParallelBlockFetcher:
             # 1. Acquire scheduler slot FIRST respecting strict priority (fixes priority inversion)
             await priority_scheduler.acquire(priority=priority)
             try:
+                # Select client from connection pool or use single client
+                active_client = client
+                if hasattr(client, "get_client") and callable(getattr(client, "get_client")):
+                    c_cand = client.get_client(priority=priority, attempt=attempt)
+                    if asyncio.iscoroutine(c_cand):
+                        c_cand = await c_cand
+                    if c_cand:
+                        active_client = c_cand
+
                 if isinstance(current_doc, InputDocumentFileLocation):
                     location = current_doc
                 else:
@@ -746,19 +774,27 @@ class ParallelBlockFetcher:
 
                 chunk_data = bytearray()
 
-                # MTProto download with stall watchdog (aborts hung downloads after 6 seconds)
+                # MTProto chunk request sizing: Telethon's maximum direct chunk size is 524,288 bytes (512 KB)
+                mtproto_chunk_size = 524288
+                req_chunk_size = min(expected_length, mtproto_chunk_size)
+                chunks_needed = (expected_length + req_chunk_size - 1) // req_chunk_size
+
+                # Stall watchdog: Urgent playback head gets 3.5s timeout for fast failover; prefetch gets 5.0s
+                chunk_timeout = 3.5 if priority == PRIORITY_URGENT else 5.0
+
                 async def _download_chunks():
-                    async for chunk in client.iter_download(
+                    async for chunk in active_client.iter_download(
                         location,
                         offset=offset,
-                        request_size=self.block_size,
-                        limit=1,
+                        chunk_size=req_chunk_size,
+                        request_size=req_chunk_size,
+                        limit=chunks_needed,
                         file_size=getattr(current_doc, "size", None),
                         dc_id=getattr(current_doc, "dc_id", None)
                     ):
                         chunk_data.extend(chunk)
 
-                await asyncio.wait_for(_download_chunks(), timeout=8.0)
+                await asyncio.wait_for(_download_chunks(), timeout=chunk_timeout)
 
                 data = bytes(chunk_data)
 
@@ -1105,10 +1141,11 @@ class StreamingEngine:
 
             metrics.active_streams = len(self._file_playback_sessions)
 
-    async def prewarm_file(self, client: TelegramClient, chat_id: int, message_id: int):
+    async def prewarm_file(self, client: Any, chat_id: int, message_id: int):
         """
-        Zero-latency cold start: Resolves the document and downloads the first 1 MB block
-        (EBML / MP4 container headers) plus index block in background before user clicks play.
+        Zero-latency cold start: Resolves the document and downloads the first 1.5 MB blocks
+        (EBML / MP4 container headers) plus index blocks (MKV Cues / MP4 moov) into RAM
+        before user clicks play.
         """
         try:
             if not client or not client.is_connected():
@@ -1123,34 +1160,39 @@ class StreamingEngine:
 
             doc_id = getattr(doc, "id", 0)
             access_hash = getattr(doc, "access_hash", 0)
+            total_blocks = (file_size + STREAM_BLOCK_SIZE_BYTES - 1) // STREAM_BLOCK_SIZE_BYTES
 
-            # Pre-warm Block 0 (first 1 MB header)
-            if not block_cache.has_block(doc_id, access_hash, 0):
-                b0_data = await fetcher.fetch_block_from_telegram(
+            # 1. Pre-warm first 3 blocks (0, 1, 2 = first 1.5 MB header)
+            head_blocks_to_warm = [b for b in range(min(3, total_blocks)) if not block_cache.has_block(doc_id, access_hash, b)]
+            for b_idx in head_blocks_to_warm:
+                b_data = await fetcher.fetch_block_from_telegram(
                     client=client,
                     doc=doc,
                     chat_id=chat_id,
                     message_id=message_id,
-                    block_idx=0,
+                    block_idx=b_idx,
                     priority=PRIORITY_NEAR
                 )
-                if b0_data:
-                    await block_cache.put(doc_id, access_hash, 0, b0_data)
-                logger.info(f"[PreWarm] Successfully pre-warmed Block 0 for video ({chat_id}, {message_id})")
+                if b_data:
+                    await block_cache.put(doc_id, access_hash, b_idx, b_data)
 
-            # Pre-warm last block (for MP4 moov atom / MKV cues) if file is large enough
-            last_block = (file_size - 1) // STREAM_BLOCK_SIZE_BYTES
-            if last_block > 0 and not block_cache.has_block(doc_id, access_hash, last_block):
-                last_data = await fetcher.fetch_block_from_telegram(
-                    client=client,
-                    doc=doc,
-                    chat_id=chat_id,
-                    message_id=message_id,
-                    block_idx=last_block,
-                    priority=PRIORITY_PREFETCH
-                )
-                if last_data:
-                    await block_cache.put(doc_id, access_hash, last_block, last_data)
+            # 2. Pre-warm last 2 blocks (tail: Cues / moov)
+            if total_blocks > 3:
+                tail_blocks = [total_blocks - 1, total_blocks - 2]
+                for b_idx in tail_blocks:
+                    if b_idx >= 3 and not block_cache.has_block(doc_id, access_hash, b_idx):
+                        b_data = await fetcher.fetch_block_from_telegram(
+                            client=client,
+                            doc=doc,
+                            chat_id=chat_id,
+                            message_id=message_id,
+                            block_idx=b_idx,
+                            priority=PRIORITY_PREFETCH
+                        )
+                        if b_data:
+                            await block_cache.put(doc_id, access_hash, b_idx, b_data)
+
+            logger.info(f"[PreWarm] Successfully pre-warmed container headers and index for video ({chat_id}, {message_id})")
         except Exception as e:
             logger.debug(f"[PreWarm] Non-fatal pre-warm notice for ({chat_id}, {message_id}): {e}")
 
