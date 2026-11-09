@@ -276,6 +276,7 @@ If an obscure or poorly formatted filename in Telegram is misidentified by autom
 3. **Series-Wide Propagation**: If you reply to a single episode of a TV show, Teleflux applies the canonical TMDB title and series metadata across **all matching episodes** while strictly preserving each episode's season and episode numbers. Unrelated shows are never affected.
 4. **Future Episodes & Rescans**: Successful corrections are permanently stored in SQLite (`title_corrections`). Future episodes of the series automatically inherit the canonical metadata, and corrections take priority over automatic parsing during channel rescans or container restarts.
 5. **Confirmation**: If the bot has message permissions, it sends a confirmation reply (e.g. `✅ Corrected to Naalam Mura (2022) [TMDB: 1032906]`).
+6. **Editing Replies (Typo Correction)**: If you accidentally make a typo or provide the wrong hint in your reply, simply edit your reply message in Telegram. Teleflux listens for message edits (`events.MessageEdited`), rechecks TMDB with the updated title hint, remodifies the video (or all matching TV episodes) with the exact canonical match, and updates its previous confirmation response (e.g. `🔄 Updated to Naalam Mura (2022)...`).
 
 ---
 

@@ -947,6 +947,12 @@ def set_series_cache(title: str, meta: dict):
     norm_key = re.sub(r"[^a-z0-9]", "", title.lower())
     _series_meta_cache[norm_key] = meta
 
+def clear_series_cache(title: str):
+    if not title:
+        return
+    norm_key = re.sub(r"[^a-z0-9]", "", title.lower())
+    _series_meta_cache.pop(norm_key, None)
+
 async def tmdb_get_with_retry(client: httpx.AsyncClient, url: str, params: dict, max_retries: int = 4) -> dict | None:
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",

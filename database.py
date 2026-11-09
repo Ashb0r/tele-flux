@@ -792,12 +792,12 @@ async def save_series_correction(source_title: str, tmdb_info: dict, user_query:
     primary_key = normalize_title(raw_title or source_title)
 
     keys_to_save = {primary_key}
-    if source_title:
-        keys_to_save.add(normalize_title(source_title))
     if raw_title:
         keys_to_save.add(normalize_title(raw_title))
 
     async with aiosqlite.connect(DB_FILE) as db:
+        if chat_id is not None and message_id is not None:
+            await db.execute("DELETE FROM title_corrections WHERE chat_id = ? AND message_id = ?", (chat_id, message_id))
         for k in keys_to_save:
             if not k:
                 continue
@@ -943,8 +943,9 @@ async def apply_series_correction_to_db(series_key: str, old_title: str, tmdb_in
                 v_parsed = parse_filename(v_fn)
                 v_raw_norm = normalize_title(v_parsed.get("raw_title", ""))
 
-                if (norm_key and (v_title_norm == norm_key or v_raw_norm == norm_key)) or \
-                   (norm_old and (v_title_norm == norm_old or v_raw_norm == norm_old)):
+                if norm_key and (v_raw_norm == norm_key or v_title_norm == norm_key):
+                    matching_items.append(v)
+                elif not norm_key and norm_old and (v_raw_norm == norm_old or v_title_norm == norm_old):
                     matching_items.append(v)
 
             for v in matching_items:

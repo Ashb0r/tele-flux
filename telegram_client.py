@@ -14,7 +14,7 @@ from telethon.tl.types import (
 from telethon.errors import FloodWaitError
 from config import DATA_DIR, CHUNK_SIZE_BYTES, ADULT_ONLY
 from database import upsert_video
-from tmdb import lookup_tmdb, parse_filename, extract_media_specs, format_stremio_stream, resolve_tmdb_by_hint, set_series_cache
+from tmdb import lookup_tmdb, parse_filename, extract_media_specs, format_stremio_stream, resolve_tmdb_by_hint, set_series_cache, clear_series_cache
 from stashdb import search_stashdb_scene, format_stashdb_stream, clean_stash_filename, extract_filename_date, extract_scene_title_and_date
 from settings_manager import load_settings
 
@@ -864,7 +864,8 @@ async def apply_manual_title_correction(
             chat_id=chat_id,
             message_id=message_id
         )
-        set_series_cache(old_title, tmdb_info)
+        if old_title and old_title != tmdb_info["title"] and old_title != raw_title:
+            clear_series_cache(old_title)
         set_series_cache(raw_title, tmdb_info)
         set_series_cache(tmdb_info["title"], tmdb_info)
 
@@ -897,6 +898,108 @@ async def apply_manual_title_correction(
             "tmdb_id": tmdb_info["tmdb_id"],
             "imdb_id": tmdb_info.get("imdb_id")
         }
+
+# Bounded map storing (chat_id, user_reply_msg_id) -> bot_response_msg_id
+_bot_reply_map: dict[tuple[int, int], int] = {}
+
+async def handle_reply_title_correction(event, is_edit: bool = False) -> bool:
+    """
+    Handles reply-based manual title corrections for new messages and edits:
+    1. Checks if the message is a reply to a video message.
+    2. Resolves TMDB title hint (fuzzy matching, typos, spelling variations).
+    3. If resolved, updates video (or all series episodes), caches, and database.
+    4. Confirms to user via new reply or editing the previous confirmation message.
+    """
+    global _bot_reply_map, telethon_client
+    import telethon.utils as telethon_utils
+    from database import get_video_by_location
+
+    if not (event.message and event.message.is_reply):
+        return False
+
+    reply_text = (event.message.message or event.message.raw_text or "").strip()
+    if not reply_text:
+        return False
+
+    replied_msg = None
+    if hasattr(event, "get_reply_message"):
+        try:
+            replied_msg = await event.get_reply_message()
+        except Exception:
+            replied_msg = None
+    if not replied_msg and getattr(event.message, "reply_to_msg_id", None):
+        if telethon_client and telethon_client.is_connected():
+            try:
+                replied_msg = await telethon_client.get_messages(event.chat_id, ids=event.message.reply_to_msg_id)
+            except Exception:
+                pass
+
+    if not replied_msg:
+        return False
+
+    target_chat_id = event.chat_id
+    target_msg_id = replied_msg.id
+
+    # Handle forwarded channel posts in discussion groups
+    if getattr(replied_msg, "fwd_from", None):
+        fwd = replied_msg.fwd_from
+        fwd_cid = getattr(fwd, "channel_id", None)
+        if not fwd_cid and getattr(fwd, "from_id", None):
+            fwd_cid = telethon_utils.get_peer_id(fwd.from_id)
+        fwd_mid = getattr(fwd, "channel_post", None) or getattr(fwd, "saved_from_msg_id", None)
+        if fwd_cid and fwd_mid:
+            if await get_video_by_location(fwd_cid, fwd_mid):
+                target_chat_id = fwd_cid
+                target_msg_id = fwd_mid
+
+    # Check if target is an indexed video or contains video media
+    is_target_video = bool(await get_video_by_location(target_chat_id, target_msg_id)) or bool(extract_video_metadata(replied_msg))
+    if not is_target_video:
+        return False
+
+    res = await apply_manual_title_correction(
+        chat_id=target_chat_id,
+        message_id=target_msg_id,
+        title_hint=reply_text,
+        target_message=replied_msg
+    )
+
+    prefix_verb = "Updated" if is_edit else "Corrected"
+    prefix_icon = "🔄" if is_edit else "✅"
+
+    if res.get("success"):
+        if res.get("media_type") == "series":
+            confirm_text = f"{prefix_icon} {prefix_verb} series to **{res['title']}** ({res.get('year')}) [TMDB: {res.get('tmdb_id')}]. Updated {res.get('updated_episodes', 1)} episode(s)."
+        else:
+            confirm_text = f"{prefix_icon} {prefix_verb} to **{res['title']}** ({res.get('year')}) [TMDB: {res.get('tmdb_id')}]."
+    else:
+        confirm_text = f"⚠️ Title correction error: {res.get('error', 'Unknown error')}"
+
+    # Respond to user: if is_edit and we replied previously, edit the previous message
+    user_msg_key = (event.chat_id, event.message.id)
+    prev_bot_msg_id = _bot_reply_map.get(user_msg_key)
+    bot_msg_edited = False
+
+    if is_edit and prev_bot_msg_id:
+        if telethon_client and hasattr(telethon_client, "edit_message"):
+            try:
+                await telethon_client.edit_message(event.chat_id, prev_bot_msg_id, confirm_text)
+                bot_msg_edited = True
+            except Exception as edit_err:
+                print(f"[Telegram Reply Notice] Could not edit previous bot message #{prev_bot_msg_id}: {edit_err}")
+
+    if not bot_msg_edited:
+        try:
+            sent = await event.reply(confirm_text)
+            if sent and hasattr(sent, "id"):
+                if len(_bot_reply_map) > 2000:
+                    for old_k in list(_bot_reply_map.keys())[:500]:
+                        _bot_reply_map.pop(old_k, None)
+                _bot_reply_map[user_msg_key] = sent.id
+        except Exception as reply_err:
+            print(f"[Telegram Reply Notice] Could not send confirmation reply: {reply_err}")
+
+    return True
 
 async def start_telegram_service():
     global telethon_client, active_channels, scan_task
@@ -999,56 +1102,9 @@ async def start_telegram_service():
                         save_known_channels(known)
 
             # 2. Check for manual title correction via reply to video message
-            if event.message and event.message.is_reply:
-                reply_text = (event.message.message or event.message.raw_text or "").strip()
-                if reply_text:
-                    replied_msg = await event.get_reply_message()
-                    if not replied_msg and event.message.reply_to_msg_id:
-                        try:
-                            replied_msg = await telethon_client.get_messages(event.chat_id, ids=event.message.reply_to_msg_id)
-                        except Exception:
-                            pass
-
-                    if replied_msg:
-                        target_chat_id = event.chat_id
-                        target_msg_id = replied_msg.id
-
-                        # Handle forwarded channel posts in discussion groups
-                        if getattr(replied_msg, "fwd_from", None):
-                            fwd = replied_msg.fwd_from
-                            fwd_cid = getattr(fwd, "channel_id", None)
-                            if not fwd_cid and getattr(fwd, "from_id", None):
-                                fwd_cid = telethon_utils.get_peer_id(fwd.from_id)
-                            fwd_mid = getattr(fwd, "channel_post", None) or getattr(fwd, "saved_from_msg_id", None)
-                            if fwd_cid and fwd_mid:
-                                from database import get_video_by_location
-                                if await get_video_by_location(fwd_cid, fwd_mid):
-                                    target_chat_id = fwd_cid
-                                    target_msg_id = fwd_mid
-
-                        # Check if target is an indexed video or contains video media
-                        from database import get_video_by_location
-                        is_target_video = bool(await get_video_by_location(target_chat_id, target_msg_id)) or bool(extract_video_metadata(replied_msg))
-
-                        if is_target_video:
-                            res = await apply_manual_title_correction(
-                                chat_id=target_chat_id,
-                                message_id=target_msg_id,
-                                title_hint=reply_text,
-                                target_message=replied_msg
-                            )
-                            try:
-                                if res.get("success"):
-                                    if res.get("media_type") == "series":
-                                        confirm_text = f"✅ Corrected series to **{res['title']}** ({res.get('year')}) [TMDB: {res.get('tmdb_id')}]. Updated {res.get('updated_episodes', 1)} episode(s)."
-                                    else:
-                                        confirm_text = f"✅ Corrected to **{res['title']}** ({res.get('year')}) [TMDB: {res.get('tmdb_id')}]."
-                                    await event.reply(confirm_text)
-                                else:
-                                    await event.reply(f"⚠️ Title correction error: {res.get('error', 'Unknown error')}")
-                            except Exception as reply_err:
-                                print(f"[Telegram Reply Notice] Could not send confirmation reply: {reply_err}")
-                            return
+            handled = await handle_reply_title_correction(event, is_edit=False)
+            if handled:
+                return
 
             # 3. Real-time video listener for active streaming channels (preserve Stremio functionality)
             if active_channels and event.chat_id in active_channels:
@@ -1059,6 +1115,16 @@ async def start_telegram_service():
                         print(f"[Realtime Streaming] New video detected in chat {event.chat_id}!")
         except Exception as e:
             print(f"[Realtime Event Error] Failed processing message: {e}")
+
+    @telethon_client.on(events.MessageEdited)
+    async def on_incoming_message_edited(event):
+        try:
+            # Check for manual title correction via edited reply to video message
+            handled = await handle_reply_title_correction(event, is_edit=True)
+            if handled:
+                return
+        except Exception as e:
+            print(f"[Realtime Edit Event Error] Failed processing edited message: {e}")
 
     return True
 
