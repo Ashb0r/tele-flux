@@ -683,6 +683,10 @@ class InFlightRequestManager:
                     data = await coro
                     if not entry.future.done():
                         entry.future.set_result(data)
+                except asyncio.CancelledError:
+                    if not entry.future.done():
+                        entry.future.cancel()
+                    raise
                 except Exception as exc:
                     if not entry.future.done():
                         entry.future.set_exception(exc)
@@ -913,7 +917,25 @@ class StreamingSession:
 
         # 2. Check or create in-flight task
         async def _do_fetch():
-            # Urgent requests bypass or acquire semaphore slot
+            # Urgent requests (playback head & seeks) must NEVER block on per-stream semaphore!
+            if priority == PRIORITY_URGENT:
+                c = await block_cache.get(self.doc_id, self.access_hash, block_idx)
+                if c is not None:
+                    return c
+
+                data = await fetcher.fetch_block_from_telegram(
+                    client=self.client,
+                    doc=self.doc,
+                    chat_id=self.chat_id,
+                    message_id=self.message_id,
+                    block_idx=block_idx,
+                    priority=priority,
+                )
+                if data:
+                    await block_cache.put(self.doc_id, self.access_hash, block_idx, data)
+                return data
+
+            # Non-urgent speculative prefetch acquires per-stream semaphore slot
             async with self.stream_semaphore:
                 c = await block_cache.get(self.doc_id, self.access_hash, block_idx)
                 if c is not None:
