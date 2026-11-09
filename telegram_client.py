@@ -14,7 +14,7 @@ from telethon.tl.types import (
 from telethon.errors import FloodWaitError
 from config import DATA_DIR, CHUNK_SIZE_BYTES, ADULT_ONLY
 from database import upsert_video
-from tmdb import lookup_tmdb, parse_filename, extract_media_specs, format_stremio_stream
+from tmdb import lookup_tmdb, parse_filename, extract_media_specs, format_stremio_stream, resolve_tmdb_by_hint, set_series_cache
 from stashdb import search_stashdb_scene, format_stashdb_stream, clean_stash_filename, extract_filename_date, extract_scene_title_and_date
 from settings_manager import load_settings
 
@@ -523,6 +523,49 @@ async def index_single_message(chat_id: int, message):
         return True
 
     # Route 2: TMDB Movie / TV Series identification (when ADULT_ONLY=False)
+    # Priority 1: Check persistent manual corrections before automatic parsing / search
+    from database import get_manual_correction, get_series_manual_correction
+    manual_corr = await get_manual_correction(chat_id=chat_id, message_id=message.id, file_name=meta["file_name"])
+    if not manual_corr and parsed.get("raw_title"):
+        manual_corr = await get_series_manual_correction(parsed["raw_title"])
+
+    if manual_corr:
+        tmdb_info = dict(manual_corr)
+        if tmdb_info.get("media_type") == "series":
+            s = parsed.get("season") or tmdb_info.get("season") or 1
+            e = parsed.get("episode") or tmdb_info.get("episode") or 1
+            ep_t = parsed.get("episode_title") or f"Episode {e}"
+            tmdb_info["season"] = s
+            tmdb_info["episode"] = e
+            tmdb_info["episode_title"] = ep_t
+            header = f"{tmdb_info['title']} - S{s:02d}E{e:02d} - {ep_t}"
+        else:
+            y_str = f" ({tmdb_info['year']})" if tmdb_info.get("year") else ""
+            header = f"{tmdb_info['title']}{y_str}"
+
+        badge, desc = format_stremio_stream(header, specs)
+
+        await upsert_video(
+            chat_id=chat_id,
+            message_id=message.id,
+            file_name=meta["file_name"],
+            file_size=meta["file_size"],
+            mime_type=meta["mime_type"],
+            tmdb_info=tmdb_info,
+            specs=specs,
+            stream_badge=badge,
+            stream_desc=desc
+        )
+
+        if tmdb_info.get("media_type") == "series":
+            from tmdb import set_series_cache
+            set_series_cache(tmdb_info["title"], tmdb_info)
+            if parsed.get("raw_title"):
+                set_series_cache(parsed["raw_title"], tmdb_info)
+
+        print(f"[Indexed via Manual Correction] #{message.id}: {header} [TMDB: {tmdb_info.get('tmdb_id')}]")
+        return True
+
     tmdb_key = (settings.get("tmdb_api_key") or "").strip()
     # If TV Series, pre-populate series cache from database if another episode was already indexed
     if parsed.get("media_type") == "series":
@@ -748,6 +791,113 @@ def is_scanning_channels() -> bool:
     global scan_task
     return bool(scan_task and not scan_task.done())
 
+async def apply_manual_title_correction(
+    chat_id: int,
+    message_id: int,
+    title_hint: str,
+    target_message=None
+) -> dict:
+    """
+    Applies manual title correction for a Telegram video message:
+    1. Validates and resolves title hint via TMDB (spelling variations, transliterations, approximate matches).
+    2. Movies: updates the movie's TMDB metadata and persists the correction.
+    3. TV Shows: updates canonical series title and metadata across all existing episodes (preserving season/ep),
+       updates in-memory cache, and persists series correction for future episodes and rescans.
+    """
+    from database import (
+        get_video_by_location,
+        save_movie_correction,
+        save_series_correction,
+        apply_movie_correction_to_db,
+        apply_series_correction_to_db
+    )
+
+    video = await get_video_by_location(chat_id, message_id)
+    if not video:
+        if target_message:
+            indexed = await index_single_message(chat_id, target_message)
+            if indexed:
+                video = await get_video_by_location(chat_id, message_id)
+        elif telethon_client and telethon_client.is_connected():
+            try:
+                entity = await telethon_client.get_entity(chat_id)
+                msgs = await telethon_client.get_messages(entity, ids=[message_id])
+                if msgs and msgs[0]:
+                    indexed = await index_single_message(chat_id, msgs[0])
+                    if indexed:
+                        video = await get_video_by_location(chat_id, message_id)
+            except Exception as e:
+                print(f"[Correction Notice] Error retrieving message #{message_id}: {e}")
+
+    if not video:
+        return {"success": False, "error": f"Video message #{message_id} not found."}
+
+    current_media_type = video.get("media_type") or "movie"
+    parsed = parse_filename(video["file_name"], video.get("caption", ""))
+    is_series = (current_media_type == "series" or parsed.get("media_type") == "series")
+    media_type_hint = "series" if is_series else "movie"
+    year_hint = video.get("year") or parsed.get("year")
+
+    tmdb_info = await resolve_tmdb_by_hint(title_hint, year_hint=year_hint, media_type_hint=media_type_hint)
+    if not tmdb_info:
+        return {"success": False, "error": f"No verified TMDB title match found for '{title_hint}'."}
+
+    resolved_type = tmdb_info.get("media_type", "movie")
+
+    if resolved_type == "series" or is_series:
+        tmdb_info["media_type"] = "series"
+        old_title = video.get("title") or video.get("file_name")
+        raw_title = parsed.get("raw_title") or old_title
+
+        updated_count = await apply_series_correction_to_db(
+            series_key=raw_title,
+            old_title=old_title,
+            tmdb_info=tmdb_info,
+            chat_id=chat_id,
+            message_id=message_id
+        )
+        await save_series_correction(
+            source_title=old_title,
+            tmdb_info=tmdb_info,
+            user_query=title_hint,
+            raw_title=raw_title,
+            chat_id=chat_id,
+            message_id=message_id
+        )
+        set_series_cache(old_title, tmdb_info)
+        set_series_cache(raw_title, tmdb_info)
+        set_series_cache(tmdb_info["title"], tmdb_info)
+
+        print(f"[Manual Correction Success] Series '{old_title}' -> '{tmdb_info['title']}' ({tmdb_info.get('year')}), updated {updated_count} episode(s)")
+        return {
+            "success": True,
+            "media_type": "series",
+            "title": tmdb_info["title"],
+            "year": tmdb_info.get("year"),
+            "tmdb_id": tmdb_info["tmdb_id"],
+            "imdb_id": tmdb_info.get("imdb_id"),
+            "updated_episodes": updated_count
+        }
+    else:
+        tmdb_info["media_type"] = "movie"
+        await apply_movie_correction_to_db(chat_id, message_id, tmdb_info)
+        await save_movie_correction(
+            chat_id=chat_id,
+            message_id=message_id,
+            file_name=video["file_name"],
+            tmdb_info=tmdb_info,
+            user_query=title_hint
+        )
+        print(f"[Manual Correction Success] Movie #{message_id} -> '{tmdb_info['title']}' ({tmdb_info.get('year')})")
+        return {
+            "success": True,
+            "media_type": "movie",
+            "title": tmdb_info["title"],
+            "year": tmdb_info.get("year"),
+            "tmdb_id": tmdb_info["tmdb_id"],
+            "imdb_id": tmdb_info.get("imdb_id")
+        }
+
 async def start_telegram_service():
     global telethon_client, active_channels, scan_task
     settings = load_settings()
@@ -831,8 +981,9 @@ async def start_telegram_service():
             pass
 
     @telethon_client.on(events.NewMessage)
-    async def on_any_channel_post(event):
+    async def on_new_incoming_message(event):
         try:
+            # 1. Realtime channel tracking
             if event.is_channel:
                 chat = await event.get_chat()
                 if chat:
@@ -846,24 +997,68 @@ async def start_telegram_service():
                             "username": getattr(chat, "username", None)
                         }
                         save_known_channels(known)
-        except Exception:
-            pass
 
-    # Real-time event listener for streaming channels (preserve existing Stremio functionality)
-    if active_channels:
-        @telethon_client.on(events.NewMessage(chats=active_channels))
-        async def on_new_video(event):
-            try:
-                indexed = await index_single_message(event.chat_id, event.message)
-                if indexed:
-                    print(f"[Realtime Streaming] New video detected in chat {event.chat_id}!")
-            except Exception as e:
-                print(f"[Realtime Streaming Error] Failed processing message: {e}")
+            # 2. Check for manual title correction via reply to video message
+            if event.message and event.message.is_reply:
+                reply_text = (event.message.message or event.message.raw_text or "").strip()
+                if reply_text:
+                    replied_msg = await event.get_reply_message()
+                    if not replied_msg and event.message.reply_to_msg_id:
+                        try:
+                            replied_msg = await telethon_client.get_messages(event.chat_id, ids=event.message.reply_to_msg_id)
+                        except Exception:
+                            pass
 
-        # Note: We do NOT auto-scan history on container boot to prevent blocking the UI,
-        # rate-limiting TMDB, or generating log spam. Channel indexing is triggered
-        # on-demand via the Stremio UI page ("Scan Channel" button).
-        pass
+                    if replied_msg:
+                        target_chat_id = event.chat_id
+                        target_msg_id = replied_msg.id
+
+                        # Handle forwarded channel posts in discussion groups
+                        if getattr(replied_msg, "fwd_from", None):
+                            fwd = replied_msg.fwd_from
+                            fwd_cid = getattr(fwd, "channel_id", None)
+                            if not fwd_cid and getattr(fwd, "from_id", None):
+                                fwd_cid = telethon_utils.get_peer_id(fwd.from_id)
+                            fwd_mid = getattr(fwd, "channel_post", None) or getattr(fwd, "saved_from_msg_id", None)
+                            if fwd_cid and fwd_mid:
+                                from database import get_video_by_location
+                                if await get_video_by_location(fwd_cid, fwd_mid):
+                                    target_chat_id = fwd_cid
+                                    target_msg_id = fwd_mid
+
+                        # Check if target is an indexed video or contains video media
+                        from database import get_video_by_location
+                        is_target_video = bool(await get_video_by_location(target_chat_id, target_msg_id)) or bool(extract_video_metadata(replied_msg))
+
+                        if is_target_video:
+                            res = await apply_manual_title_correction(
+                                chat_id=target_chat_id,
+                                message_id=target_msg_id,
+                                title_hint=reply_text,
+                                target_message=replied_msg
+                            )
+                            try:
+                                if res.get("success"):
+                                    if res.get("media_type") == "series":
+                                        confirm_text = f"✅ Corrected series to **{res['title']}** ({res.get('year')}) [TMDB: {res.get('tmdb_id')}]. Updated {res.get('updated_episodes', 1)} episode(s)."
+                                    else:
+                                        confirm_text = f"✅ Corrected to **{res['title']}** ({res.get('year')}) [TMDB: {res.get('tmdb_id')}]."
+                                    await event.reply(confirm_text)
+                                else:
+                                    await event.reply(f"⚠️ Title correction error: {res.get('error', 'Unknown error')}")
+                            except Exception as reply_err:
+                                print(f"[Telegram Reply Notice] Could not send confirmation reply: {reply_err}")
+                            return
+
+            # 3. Real-time video listener for active streaming channels (preserve Stremio functionality)
+            if active_channels and event.chat_id in active_channels:
+                meta = extract_video_metadata(event.message)
+                if meta:
+                    indexed = await index_single_message(event.chat_id, event.message)
+                    if indexed:
+                        print(f"[Realtime Streaming] New video detected in chat {event.chat_id}!")
+        except Exception as e:
+            print(f"[Realtime Event Error] Failed processing message: {e}")
 
     return True
 

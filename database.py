@@ -109,6 +109,35 @@ async def init_db():
         await db.execute("CREATE INDEX IF NOT EXISTS idx_stash_id ON videos(stash_id)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_media_type ON videos(media_type)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_file_lookup ON videos(file_name, file_size)")
+
+        # Persistent Manual Title Corrections Table
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS title_corrections (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id INTEGER,
+                message_id INTEGER,
+                file_name TEXT,
+                series_key TEXT,
+                source_title TEXT,
+                media_type TEXT NOT NULL,
+                tmdb_id INTEGER NOT NULL,
+                imdb_id TEXT,
+                canonical_title TEXT NOT NULL,
+                year INTEGER,
+                poster TEXT,
+                backdrop TEXT,
+                overview TEXT,
+                rating REAL,
+                genres TEXT,
+                user_query TEXT,
+                created_at INTEGER NOT NULL
+            )
+        """)
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_corr_msg ON title_corrections(chat_id, message_id)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_corr_file ON title_corrections(file_name)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_corr_series ON title_corrections(series_key)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_corr_canonical ON title_corrections(canonical_title)")
+
         await db.commit()
 
 async def upsert_video(
@@ -556,6 +585,27 @@ async def reconcile_library():
         series_rows = await cur.fetchall()
         for srow in series_rows:
             st = srow["title"]
+            s_corr = await get_series_manual_correction(st)
+            if s_corr:
+                genres_str = ",".join(s_corr.get("genres", [])) if isinstance(s_corr.get("genres"), list) else (s_corr.get("genres") or "")
+                await db.execute("""
+                    UPDATE videos SET
+                        tmdb_id = ?,
+                        imdb_id = COALESCE(?, imdb_id),
+                        year = COALESCE(?, year),
+                        poster = ?,
+                        backdrop = COALESCE(?, backdrop),
+                        overview = COALESCE(?, overview),
+                        rating = COALESCE(?, rating),
+                        genres = COALESCE(?, genres)
+                    WHERE media_type = 'series' AND title = ?
+                """, (
+                    s_corr["tmdb_id"], s_corr.get("imdb_id"), s_corr.get("year"), s_corr.get("poster"),
+                    s_corr.get("backdrop"), s_corr.get("overview"), s_corr.get("rating"), genres_str,
+                    st
+                ))
+                continue
+
             cur_best = await db.execute("""
                 SELECT tmdb_id, imdb_id, title, year, poster, backdrop, overview, rating, genres
                 FROM videos
@@ -587,7 +637,7 @@ async def reconcile_library():
 
         # 2. Heal movies that currently have fallback SVG posters
         cur_movies = await db.execute("""
-            SELECT id, file_name, title, media_type
+            SELECT id, chat_id, message_id, file_name, title, media_type
             FROM videos
             WHERE media_type = 'movie'
               AND (poster LIKE '%/poster/%' OR poster IS NULL OR tmdb_id IS NULL OR imdb_id IS NULL)
@@ -599,6 +649,10 @@ async def reconcile_library():
             for frow in fallback_movies:
                 fn = frow["file_name"]
                 vid_id = frow["id"]
+                # If this movie has a manual correction, don't overwrite with fallback
+                m_corr = await get_manual_correction(frow["chat_id"], frow["message_id"], fn)
+                if m_corr:
+                    continue
                 parsed = parse_filename(fn)
                 hit = await lookup_tmdb(fn, parsed_override=parsed)
                 if hit and hit.get("poster") and not hit["poster"].endswith(".svg"):
@@ -625,7 +679,7 @@ async def reconcile_library():
 
         # 3. Heal any movie where TMDB resolves to a more accurate metadata match
         # (e.g. 'Fly Girls (2010)' exact year vs undated documentary, 'The Handmaiden', 'Pirates II', 'Beast')
-        cur_all_movies = await db.execute("SELECT id, file_name, title, media_type, tmdb_id, imdb_id, year FROM videos WHERE media_type = 'movie'")
+        cur_all_movies = await db.execute("SELECT id, chat_id, message_id, file_name, title, media_type, tmdb_id, imdb_id, year FROM videos WHERE media_type = 'movie'")
         all_movies = await cur_all_movies.fetchall()
 
         if all_movies:
@@ -634,6 +688,12 @@ async def reconcile_library():
                 fn = mrow["file_name"]
                 curr_tmdb_id = mrow["tmdb_id"]
                 vid_id = mrow["id"]
+
+                # Preserve manual corrections: NEVER overwrite with automatic lookup!
+                m_corr = await get_manual_correction(mrow["chat_id"], mrow["message_id"], fn)
+                if m_corr:
+                    continue
+
                 parsed = parse_filename(fn)
 
                 hit = await lookup_tmdb(fn, parsed_override=parsed)
@@ -664,3 +724,283 @@ async def reconcile_library():
                         badge, desc, vid_id
                     ))
                     await db.commit()
+
+
+# ---------------------------------------------------------------------
+# Manual Title Corrections Database API
+# ---------------------------------------------------------------------
+
+def normalize_title(s: str) -> str:
+    if not s:
+        return ""
+    return re.sub(r"[^a-z0-9]", "", s.lower())
+
+def _row_to_tmdb_info(row: dict) -> dict:
+    genres_raw = row.get("genres", "") or ""
+    genres_list = [g.strip() for g in genres_raw.split(",") if g.strip()] if isinstance(genres_raw, str) else genres_raw
+    return {
+        "tmdb_id": row["tmdb_id"],
+        "imdb_id": row["imdb_id"],
+        "media_type": row["media_type"],
+        "title": row["canonical_title"],
+        "year": row["year"],
+        "poster": row["poster"],
+        "backdrop": row["backdrop"],
+        "overview": row["overview"] or "",
+        "rating": row["rating"] or 0.0,
+        "genres": genres_list or [],
+        "is_manual_correction": True,
+        "user_query": row.get("user_query")
+    }
+
+async def save_movie_correction(chat_id: int, message_id: int, file_name: str, tmdb_info: dict, user_query: str):
+    genres_str = ",".join(tmdb_info["genres"]) if isinstance(tmdb_info.get("genres"), list) else (tmdb_info.get("genres") or "")
+    now = int(time.time())
+    async with aiosqlite.connect(DB_FILE) as db:
+        await db.execute("DELETE FROM title_corrections WHERE chat_id = ? AND message_id = ?", (chat_id, message_id))
+        await db.execute("""
+            INSERT INTO title_corrections (
+                chat_id, message_id, file_name, series_key, source_title,
+                media_type, tmdb_id, imdb_id, canonical_title, year,
+                poster, backdrop, overview, rating, genres, user_query, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            chat_id,
+            message_id,
+            file_name,
+            None,
+            tmdb_info["title"],
+            "movie",
+            tmdb_info["tmdb_id"],
+            tmdb_info.get("imdb_id"),
+            tmdb_info["title"],
+            tmdb_info.get("year"),
+            tmdb_info.get("poster"),
+            tmdb_info.get("backdrop"),
+            tmdb_info.get("overview"),
+            tmdb_info.get("rating"),
+            genres_str,
+            user_query,
+            now
+        ))
+        await db.commit()
+
+async def save_series_correction(source_title: str, tmdb_info: dict, user_query: str, raw_title: str | None = None, chat_id: int | None = None, message_id: int | None = None):
+    genres_str = ",".join(tmdb_info["genres"]) if isinstance(tmdb_info.get("genres"), list) else (tmdb_info.get("genres") or "")
+    now = int(time.time())
+
+    primary_key = normalize_title(raw_title or source_title)
+
+    keys_to_save = {primary_key}
+    if source_title:
+        keys_to_save.add(normalize_title(source_title))
+    if raw_title:
+        keys_to_save.add(normalize_title(raw_title))
+
+    async with aiosqlite.connect(DB_FILE) as db:
+        for k in keys_to_save:
+            if not k:
+                continue
+            await db.execute("DELETE FROM title_corrections WHERE series_key = ?", (k,))
+            await db.execute("""
+                INSERT INTO title_corrections (
+                    chat_id, message_id, file_name, series_key, source_title,
+                    media_type, tmdb_id, imdb_id, canonical_title, year,
+                    poster, backdrop, overview, rating, genres, user_query, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                chat_id,
+                message_id,
+                None,
+                k,
+                source_title,
+                "series",
+                tmdb_info["tmdb_id"],
+                tmdb_info.get("imdb_id"),
+                tmdb_info["title"],
+                tmdb_info.get("year"),
+                tmdb_info.get("poster"),
+                tmdb_info.get("backdrop"),
+                tmdb_info.get("overview"),
+                tmdb_info.get("rating"),
+                genres_str,
+                user_query,
+                now
+            ))
+        await db.commit()
+
+async def get_manual_correction(chat_id: int | None = None, message_id: int | None = None, file_name: str | None = None) -> dict | None:
+    async with aiosqlite.connect(DB_FILE) as db:
+        db.row_factory = aiosqlite.Row
+        if chat_id is not None and message_id is not None:
+            async with db.execute(
+                "SELECT * FROM title_corrections WHERE chat_id = ? AND message_id = ? ORDER BY id DESC LIMIT 1",
+                (chat_id, message_id)
+            ) as cur:
+                row = await cur.fetchone()
+                if row:
+                    return _row_to_tmdb_info(dict(row))
+        if file_name:
+            async with db.execute(
+                "SELECT * FROM title_corrections WHERE file_name = ? ORDER BY id DESC LIMIT 1",
+                (file_name,)
+            ) as cur:
+                row = await cur.fetchone()
+                if row:
+                    return _row_to_tmdb_info(dict(row))
+    return None
+
+async def get_series_manual_correction(raw_title: str) -> dict | None:
+    if not raw_title:
+        return None
+    k = normalize_title(raw_title)
+    if not k:
+        return None
+    async with aiosqlite.connect(DB_FILE) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("""
+            SELECT * FROM title_corrections 
+            WHERE media_type = 'series' AND (series_key = ? OR LOWER(source_title) = LOWER(?) OR LOWER(canonical_title) = LOWER(?))
+            ORDER BY id DESC LIMIT 1
+        """, (k, raw_title.strip(), raw_title.strip())) as cur:
+            row = await cur.fetchone()
+            if row:
+                return _row_to_tmdb_info(dict(row))
+    return None
+
+async def apply_movie_correction_to_db(chat_id: int, message_id: int, tmdb_info: dict) -> bool:
+    from tmdb import format_stremio_stream, extract_media_specs
+    genres_str = ",".join(tmdb_info["genres"]) if isinstance(tmdb_info.get("genres"), list) else (tmdb_info.get("genres") or "")
+
+    async with aiosqlite.connect(DB_FILE) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM videos WHERE chat_id = ? AND message_id = ?", (chat_id, message_id)) as cur:
+            row = await cur.fetchone()
+            if not row:
+                return False
+            v = dict(row)
+
+        y_str = f" ({tmdb_info['year']})" if tmdb_info.get("year") else ""
+        header = f"{tmdb_info['title']}{y_str}"
+        specs = extract_media_specs(f"{v['file_name']}\n{v.get('overview', '')}", file_size=v.get("file_size", 0))
+        badge, desc = format_stremio_stream(header, specs)
+
+        await db.execute("""
+            UPDATE videos SET
+                media_type = 'movie',
+                tmdb_id = ?,
+                imdb_id = ?,
+                title = ?,
+                year = ?,
+                poster = ?,
+                backdrop = ?,
+                overview = ?,
+                rating = ?,
+                genres = ?,
+                stream_badge = ?,
+                stream_desc = ?
+            WHERE chat_id = ? AND message_id = ?
+        """, (
+            tmdb_info["tmdb_id"],
+            tmdb_info.get("imdb_id"),
+            tmdb_info["title"],
+            tmdb_info.get("year"),
+            tmdb_info.get("poster"),
+            tmdb_info.get("backdrop"),
+            tmdb_info.get("overview"),
+            tmdb_info.get("rating"),
+            genres_str,
+            badge,
+            desc,
+            chat_id,
+            message_id
+        ))
+        await db.commit()
+        return True
+
+async def apply_series_correction_to_db(series_key: str, old_title: str, tmdb_info: dict, chat_id: int | None = None, message_id: int | None = None) -> int:
+    from tmdb import format_stremio_stream, extract_media_specs, parse_filename
+    genres_str = ",".join(tmdb_info["genres"]) if isinstance(tmdb_info.get("genres"), list) else (tmdb_info.get("genres") or "")
+
+    norm_key = normalize_title(series_key)
+    norm_old = normalize_title(old_title)
+
+    updated_count = 0
+    async with aiosqlite.connect(DB_FILE) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM videos") as cur:
+            rows = await cur.fetchall()
+            matching_items = []
+            for r in rows:
+                v = dict(r)
+                # Match if replied message directly
+                if chat_id is not None and message_id is not None and v["chat_id"] == chat_id and v["message_id"] == message_id:
+                    matching_items.append(v)
+                    continue
+
+                v_title_norm = normalize_title(v.get("title", ""))
+                v_fn = v.get("file_name", "")
+                v_parsed = parse_filename(v_fn)
+                v_raw_norm = normalize_title(v_parsed.get("raw_title", ""))
+
+                if (norm_key and (v_title_norm == norm_key or v_raw_norm == norm_key)) or \
+                   (norm_old and (v_title_norm == norm_old or v_raw_norm == norm_old)):
+                    matching_items.append(v)
+
+            for v in matching_items:
+                s = v.get("season")
+                e = v.get("episode")
+                if s is None or e is None:
+                    parsed = parse_filename(v.get("file_name", ""))
+                    s = s if s is not None else (parsed.get("season") or 1)
+                    e = e if e is not None else (parsed.get("episode") or 1)
+
+                ep_t = v.get("episode_title") or f"Episode {e}"
+                header = f"{tmdb_info['title']} - S{s:02d}E{e:02d} - {ep_t}"
+                specs = extract_media_specs(f"{v['file_name']}\n{v.get('overview', '')}", file_size=v.get("file_size", 0))
+                badge, desc = format_stremio_stream(header, specs)
+
+                await db.execute("""
+                    UPDATE videos SET
+                        media_type = 'series',
+                        tmdb_id = ?,
+                        imdb_id = ?,
+                        title = ?,
+                        year = ?,
+                        season = ?,
+                        episode = ?,
+                        poster = ?,
+                        backdrop = ?,
+                        overview = ?,
+                        rating = ?,
+                        genres = ?,
+                        stream_badge = ?,
+                        stream_desc = ?
+                    WHERE id = ?
+                """, (
+                    tmdb_info["tmdb_id"],
+                    tmdb_info.get("imdb_id"),
+                    tmdb_info["title"],
+                    tmdb_info.get("year"),
+                    s,
+                    e,
+                    tmdb_info.get("poster"),
+                    tmdb_info.get("backdrop"),
+                    tmdb_info.get("overview"),
+                    tmdb_info.get("rating"),
+                    genres_str,
+                    badge,
+                    desc,
+                    v["id"]
+                ))
+                updated_count += 1
+
+        await db.commit()
+    return updated_count
+
+async def get_all_corrections() -> list[dict]:
+    async with aiosqlite.connect(DB_FILE) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM title_corrections ORDER BY id DESC") as cur:
+            rows = await cur.fetchall()
+            return [dict(r) for r in rows]

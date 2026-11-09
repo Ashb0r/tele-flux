@@ -218,6 +218,27 @@ async def clear_stremio_catalog_api():
     await clear_library_database()
     return {"success": True, "message": "Stremio indexed catalog cleared successfully."}
 
+class ManualCorrectionRequest(BaseModel):
+    chat_id: int
+    message_id: int
+    title_hint: str
+
+@app.post("/api/manual-correction")
+async def manual_correction_api(payload: ManualCorrectionRequest):
+    from telegram_client import apply_manual_title_correction
+    res = await apply_manual_title_correction(
+        chat_id=payload.chat_id,
+        message_id=payload.message_id,
+        title_hint=payload.title_hint
+    )
+    return res
+
+@app.get("/api/title-corrections")
+async def get_title_corrections_api():
+    from database import get_all_corrections
+    corrections = await get_all_corrections()
+    return {"corrections": corrections}
+
 @app.get("/api/stremio/stats")
 async def stremio_stats_api():
     from database import get_library_stats

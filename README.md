@@ -267,6 +267,18 @@ Teleflux eliminates traditional downloading bottlenecks by piping encrypted Tele
 
 ---
 
+## ✍️ Reply-Based Manual Title Correction
+
+If an obscure or poorly formatted filename in Telegram is misidentified by automatic extraction, you can correct it instantly using Telegram replies:
+
+1. **Reply in Telegram**: In your connected Telegram channel (or its linked discussion group), reply directly to the video message with the correct title hint (e.g. `Naalaam Mura` or `Breaking Bad`).
+2. **Fuzzy TMDB Validation**: Teleflux searches TMDB and uses intelligent title similarity matching to resolve spelling variations, transliterations, and typos (e.g. `Naalaam Mura` -> `Naalam Mura (2022)`). If no verified match is found on TMDB, the query is rejected rather than blindly accepted.
+3. **Series-Wide Propagation**: If you reply to a single episode of a TV show, Teleflux applies the canonical TMDB title and series metadata across **all matching episodes** while strictly preserving each episode's season and episode numbers. Unrelated shows are never affected.
+4. **Future Episodes & Rescans**: Successful corrections are permanently stored in SQLite (`title_corrections`). Future episodes of the series automatically inherit the canonical metadata, and corrections take priority over automatic parsing during channel rescans or container restarts.
+5. **Confirmation**: If the bot has message permissions, it sends a confirmation reply (e.g. `✅ Corrected to Naalam Mura (2022) [TMDB: 1032906]`).
+
+---
+
 ## 🔞 Optional: Adult Mode (Teleflux Red)
 
 Teleflux includes an optional toggle for adult media collections powered by StashDB:

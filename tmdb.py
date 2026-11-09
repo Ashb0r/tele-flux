@@ -2,6 +2,7 @@ import asyncio
 import re
 import html
 import urllib.parse
+import difflib
 import httpx
 from config import PUBLIC_URL
 from settings_manager import load_settings
@@ -1122,6 +1123,22 @@ async def lookup_tmdb(file_name: str, caption: str = "", parsed_override: dict |
     episode_title = parsed["episode_title"]
     language = parsed.get("language")
 
+    # 0. Manual Correction Priority Check
+    from database import get_series_manual_correction, get_manual_correction
+    manual_series = await get_series_manual_correction(raw_title)
+    if manual_series:
+        hit = dict(manual_series)
+        hit["season"] = season
+        hit["episode"] = episode
+        hit["episode_title"] = episode_title or (f"Episode {episode}" if episode else None)
+        set_series_cache(raw_title, hit)
+        set_series_cache(hit["title"], hit)
+        return hit
+
+    manual_movie = await get_manual_correction(file_name=file_name)
+    if manual_movie and manual_movie.get("media_type") == "movie":
+        return dict(manual_movie)
+
     # 1. Series Cache Check: Guarantee all episodes of the same show share the EXACT same card
     if media_type == "series":
         cached_hit = get_series_cache(raw_title)
@@ -1205,3 +1222,249 @@ async def lookup_tmdb(file_name: str, caption: str = "", parsed_override: dict |
         print(f"[TMDB Exception] '{file_name}': {e}")
 
     return fallback
+
+
+def compute_title_similarity(q_str: str, target_str: str) -> float:
+    if not q_str or not target_str:
+        return 0.0
+    q_low = q_str.lower().strip()
+    t_low = target_str.lower().strip()
+    if q_low == t_low:
+        return 1.0
+
+    q_norm = normalize_title(q_str)
+    t_norm = normalize_title(target_str)
+    if q_norm == t_norm:
+        return 1.0
+
+    r1 = difflib.SequenceMatcher(None, q_norm, t_norm).ratio()
+
+    q_no_art = normalize_title(strip_article(q_str))
+    t_no_art = normalize_title(strip_article(target_str))
+    if q_no_art == t_no_art:
+        return 0.98
+    r2 = difflib.SequenceMatcher(None, q_no_art, t_no_art).ratio()
+
+    # Word-level fuzzy matching for multi-word queries (e.g. 'Naalaam Mura' -> 'Naalam Mura')
+    q_words = [w for w in re.split(r'\s+', q_low) if w]
+    t_words = [w for w in re.split(r'\s+', t_low) if w]
+    if q_words and t_words:
+        word_matches = []
+        for qw in q_words:
+            best_w = max([difflib.SequenceMatcher(None, qw, tw).ratio() for tw in t_words] or [0.0])
+            word_matches.append(best_w)
+        r3 = sum(word_matches) / len(word_matches)
+    else:
+        r3 = 0.0
+
+    return max(r1, r2, r3)
+
+
+async def resolve_tmdb_by_hint(
+    hint: str,
+    year_hint: int | None = None,
+    media_type_hint: str | None = None,
+    client: httpx.AsyncClient | None = None
+) -> dict | None:
+    """
+    Manual title correction resolver:
+    - Allows spelling variations, transliterations, and approximate title matches.
+    - Searches TMDB and selects the best verified canonical result.
+    - Does NOT blindly accept the reply text.
+    - Returns official canonical title, year, posters, and external IDs (IMDb).
+    """
+    if not hint or not hint.strip():
+        return None
+
+    api_key = get_tmdb_key()
+    if not api_key:
+        print("[TMDB Notice] Cannot resolve manual correction without TMDB API Key.")
+        return None
+
+    # Strip command prefixes like "/correct Naalaam Mura" or "fix: Naalaam Mura"
+    clean_hint = re.sub(r'^(?:/(?:correct|fix|set_title|title)|(?:correct|fix|title)\s*[:\-])\s*', '', hint.strip(), flags=re.I).strip()
+
+    # Check if a 4-digit release year is included in the hint text: e.g. "Naalam Mura (2022)"
+    m_year = re.search(r'[\(\[]?\b(19\d{2}|20\d{2})\b[\)\]]?', clean_hint)
+    query_year = year_hint
+    query_title = clean_hint
+    if m_year:
+        y_val = int(m_year.group(1))
+        no_yr = clean_hint[:m_year.start()].strip() + " " + clean_hint[m_year.end():].strip()
+        no_yr = re.sub(r'[\(\[\{\s._\-+:]+$', '', no_yr).strip()
+        if len(no_yr) >= 2:
+            query_year = y_val
+            query_title = no_yr
+        elif not query_year:
+            query_year = y_val
+
+    # Clean query title of brackets or extra punctuation
+    clean_query = re.sub(r'[._\-+:]+', ' ', query_title)
+    clean_query = re.sub(r'\s+', ' ', clean_query).strip()
+
+    # Determine endpoints to search based on media_type_hint
+    if media_type_hint == "series":
+        endpoints_to_search = ["tv", "movie"]
+    elif media_type_hint == "movie":
+        endpoints_to_search = ["movie", "tv"]
+    else:
+        endpoints_to_search = ["movie", "tv"]
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0 Safari/537.36",
+        "Accept": "application/json"
+    }
+
+    async def _do_search(c: httpx.AsyncClient):
+        all_candidates = []
+        seen_keys = set()
+
+        for ep in endpoints_to_search:
+            url = f"https://api.themoviedb.org/3/search/{ep}"
+            params = {
+                "api_key": api_key,
+                "query": clean_query,
+                "include_adult": "true"
+            }
+
+            # Search with year filter if year provided
+            if query_year:
+                params_y = dict(params)
+                params_y["year" if ep == "movie" else "first_air_date_year"] = query_year
+                try:
+                    resp_y = await c.get(url, params=params_y, headers=headers, timeout=12.0)
+                    if resp_y.status_code == 200:
+                        for item in resp_y.json().get("results", []):
+                            key = (ep, item.get("id"))
+                            if key not in seen_keys:
+                                seen_keys.add(key)
+                                item["_ep_type"] = "series" if ep == "tv" else "movie"
+                                all_candidates.append(item)
+                except Exception:
+                    pass
+
+            # Search broad without year
+            try:
+                resp = await c.get(url, params=params, headers=headers, timeout=12.0)
+                if resp.status_code == 200:
+                    for item in resp.json().get("results", []):
+                        key = (ep, item.get("id"))
+                        if key not in seen_keys:
+                            seen_keys.add(key)
+                            item["_ep_type"] = "series" if ep == "tv" else "movie"
+                            all_candidates.append(item)
+            except Exception:
+                pass
+
+        return all_candidates
+
+    candidates = []
+    if client is not None:
+        candidates = await _do_search(client)
+    else:
+        async with httpx.AsyncClient(timeout=14.0) as local_c:
+            candidates = await _do_search(local_c)
+
+    if not candidates:
+        print(f"[TMDB Validation] No candidates found on TMDB for '{clean_query}'.")
+        return None
+
+    # Score and rank candidates using similarity & metadata verification
+    scored_candidates = []
+    for cand in candidates:
+        cand_type = cand.get("_ep_type") or ("series" if "name" in cand or "first_air_date" in cand else "movie")
+        raw_t = cand.get("name") if cand_type == "series" else cand.get("title")
+        t = (raw_t or "").strip()
+        raw_orig = cand.get("original_name") if cand_type == "series" else cand.get("original_title")
+        orig = (raw_orig or "").strip()
+        date_str = (cand.get("first_air_date" if cand_type == "series" else "release_date") or "").strip()
+        cand_year = int(date_str[:4]) if len(date_str) >= 4 and date_str[:4].isdigit() else None
+
+        sim_t = compute_title_similarity(clean_query, t)
+        sim_orig = compute_title_similarity(clean_query, orig) if orig else 0.0
+        best_sim = max(sim_t, sim_orig)
+
+        # Verification threshold: Reject completely unrelated titles (must be at least 0.50 similarity)
+        if best_sim < 0.50:
+            continue
+
+        score = best_sim * 100.0
+
+        # Exact match bonus
+        if normalize_title(clean_query) == normalize_title(t) or normalize_title(clean_query) == normalize_title(orig):
+            score += 20.0
+
+        # Year matching bonus / penalty
+        if query_year and cand_year:
+            if query_year == cand_year:
+                score += 25.0
+            elif abs(query_year - cand_year) == 1:
+                score += 15.0
+            elif abs(query_year - cand_year) <= 2:
+                score += 5.0
+            elif abs(query_year - cand_year) > 6:
+                score -= 25.0
+
+        # Media type alignment bonus
+        if media_type_hint and cand_type == media_type_hint:
+            score += 15.0
+
+        # TMDB Popularity tie-breaker
+        score += min(5.0, float(cand.get("popularity", 0.0)) / 20.0)
+
+        scored_candidates.append((score, best_sim, cand, cand_type, cand_year, t))
+
+    if not scored_candidates:
+        print(f"[TMDB Validation] None of {len(candidates)} candidates met verification threshold for '{clean_query}'.")
+        return None
+
+    # Pick top candidate
+    scored_candidates.sort(key=lambda x: x[0], reverse=True)
+    best_score, best_sim, best_cand, chosen_type, chosen_year, chosen_title = scored_candidates[0]
+
+    tmdb_id = best_cand["id"]
+
+    # Fetch external IDs for IMDb ID
+    imdb_id = None
+    async def _fetch_ext_ids(c: httpx.AsyncClient):
+        ext_ep = "tv" if chosen_type == "series" else "movie"
+        ext_url = f"https://api.themoviedb.org/3/{ext_ep}/{tmdb_id}/external_ids"
+        try:
+            r = await c.get(ext_url, params={"api_key": api_key}, headers=headers, timeout=8.0)
+            if r.status_code == 200:
+                return r.json().get("imdb_id")
+        except Exception:
+            pass
+        return None
+
+    if client is not None:
+        imdb_id = await _fetch_ext_ids(client)
+    else:
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as local_c:
+                imdb_id = await _fetch_ext_ids(local_c)
+        except Exception:
+            pass
+
+    poster_path = best_cand.get("poster_path")
+    backdrop_path = best_cand.get("backdrop_path")
+    poster_url = f"https://image.tmdb.org/t/p/w500{poster_path}" if poster_path else f"{PUBLIC_URL}/poster/{chosen_type}/{urllib.parse.quote(chosen_title)}.svg"
+    backdrop_url = f"https://image.tmdb.org/t/p/original{backdrop_path}" if backdrop_path else None
+    overview = best_cand.get("overview", "")
+    rating = round(float(best_cand.get("vote_average", 0.0)), 1)
+
+    print(f"[TMDB Manual Title Verified] Query: '{hint}' -> Canonical: '{chosen_title}' ({chosen_year}) [{chosen_type.upper()}] [TMDB: {tmdb_id}, IMDb: {imdb_id}, Sim: {best_sim:.2f}]")
+
+    return {
+        "tmdb_id": tmdb_id,
+        "imdb_id": imdb_id,
+        "media_type": chosen_type,
+        "title": chosen_title,
+        "year": chosen_year,
+        "poster": poster_url,
+        "backdrop": backdrop_url,
+        "overview": overview,
+        "rating": rating,
+        "genres": [],
+        "is_manual_correction": True
+    }
