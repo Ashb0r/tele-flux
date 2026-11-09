@@ -28,14 +28,24 @@ STASHDB_API_KEY = os.getenv("STASHDB_API_KEY", "")
 STASHDB_GRAPHQL_URL = os.getenv("STASHDB_GRAPHQL_URL", "https://stashdb.org/graphql")
 
 # High-Performance Streaming Engine Configuration (hardcoded for optimal buffer-free streaming)
-STREAM_BLOCK_SIZE_KB = 512
+# 1 MB (1024 KB) chunk size is the native MTProto transfer quantum maximizing DC line-rate
+STREAM_BLOCK_SIZE_KB = 1024
 STREAM_BLOCK_SIZE_BYTES = STREAM_BLOCK_SIZE_KB * 1024
 CHUNK_SIZE_KB = STREAM_BLOCK_SIZE_KB
 CHUNK_SIZE_BYTES = STREAM_BLOCK_SIZE_BYTES
 
-STREAM_PARALLEL_CONNECTIONS = 4
-STREAM_GLOBAL_MAX_REQUESTS = 8
-STREAM_CACHE_MAX_MB = 128
-STREAM_PREFETCH_MIN_MB = 6
-STREAM_PREFETCH_MAX_MB = 16
-STREAM_MAX_ACTIVE_STREAMS = 4
+# Concurrency & Scheduler Tuning
+STREAM_PARALLEL_CONNECTIONS = 8
+STREAM_GLOBAL_MAX_REQUESTS = 32
+
+# Multi-Tiered Cache: Fast RAM (L1) + Persistent Disk (L2)
+STREAM_CACHE_MAX_MB = 256
+STREAM_DISK_CACHE_ENABLED = True
+STREAM_DISK_CACHE_DIR = os.getenv("STREAM_DISK_CACHE_DIR", os.path.join(DATA_DIR, "stream_cache"))
+STREAM_DISK_CACHE_MAX_GB = int(os.getenv("STREAM_DISK_CACHE_MAX_GB", "20"))
+
+# Dynamic Read-Ahead & Idle Buffer Pipeline
+STREAM_PREFETCH_MIN_MB = 16
+STREAM_PREFETCH_MAX_MB = 64
+STREAM_PAUSE_PREFETCH_MAX_MB = int(os.getenv("STREAM_PAUSE_PREFETCH_MAX_MB", "1024"))  # Up to 1 GB idle prefetch
+STREAM_MAX_ACTIVE_STREAMS = 8

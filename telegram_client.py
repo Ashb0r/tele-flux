@@ -23,15 +23,42 @@ VIDEO_EXTENSIONS = (
     ".m2ts", ".m4v", ".wmv", ".flv", ".vob", ".mpg", ".mpeg", ".3gp"
 )
 
+EXTENSION_TO_MIME = {
+    ".mkv": "video/x-matroska",
+    ".mp4": "video/mp4",
+    ".m4v": "video/mp4",
+    ".webm": "video/webm",
+    ".avi": "video/x-msvideo",
+    ".mov": "video/quicktime",
+    ".ts": "video/mp2t",
+    ".m2ts": "video/mp2t",
+    ".wmv": "video/x-ms-wmv",
+    ".flv": "video/x-flv",
+    ".vob": "video/x-ms-vob",
+    ".mpg": "video/mpeg",
+    ".mpeg": "video/mpeg",
+    ".3gp": "video/3gpp",
+}
+
+def get_video_mime_type(file_name: str, telegram_mime: str = "") -> str:
+    ext = os.path.splitext(file_name or "")[1].lower()
+    if ext in EXTENSION_TO_MIME:
+        return EXTENSION_TO_MIME[ext]
+    if telegram_mime and telegram_mime.lower().startswith("video/"):
+        return telegram_mime.lower()
+    return "video/mp4"
+
 VIDEO_MIMES = (
     "video/", "application/x-matroska", "application/x-mp4",
     "application/octet-stream", "binary/octet-stream"
 )
 
 SESSION_PATH = os.path.join(DATA_DIR, "bot_session")
+STREAM_SESSION_PATH = os.path.join(DATA_DIR, "stream_bot_session")
 
-# Global client and channel tracking
+# Global clients and channel tracking
 telethon_client: TelegramClient | None = None
+telethon_streaming_client: TelegramClient | None = None
 active_channels: list[int] = []
 scan_task: asyncio.Task | None = None
 
@@ -449,7 +476,7 @@ def extract_video_metadata(message) -> dict | None:
             "file_name": actual_file_name,
             "caption": caption,
             "file_size": doc.size,
-            "mime_type": mime if mime.startswith("video/") else "video/mp4",
+            "mime_type": get_video_mime_type(actual_file_name, mime),
             "document": doc,
             "parsed": parsed,
             "specs": specs,
@@ -1002,7 +1029,7 @@ async def handle_reply_title_correction(event, is_edit: bool = False) -> bool:
     return True
 
 async def start_telegram_service():
-    global telethon_client, active_channels, scan_task
+    global telethon_client, telethon_streaming_client, active_channels, scan_task
     settings = load_settings()
     
     # Require Telegram credentials (either bot token or user session)
@@ -1025,6 +1052,8 @@ async def start_telegram_service():
 
     if telethon_client and telethon_client.is_connected():
         await telethon_client.disconnect()
+    if telethon_streaming_client and telethon_streaming_client.is_connected():
+        await telethon_streaming_client.disconnect()
 
     if login_mode == "user" and session_string:
         print("[Telegram] Starting MTProto client in USER MODE (Full Channel History Access)...")
@@ -1039,6 +1068,25 @@ async def start_telegram_service():
             request_retries=10
         )
         await telethon_client.start()
+
+        # Dedicated high-speed streaming client (updates disabled to prevent event congestion)
+        try:
+            telethon_streaming_client = TelegramClient(
+                StringSession(session_string),
+                api_id,
+                api_hash,
+                receive_updates=False,
+                connection_retries=10,
+                retry_delay=1,
+                auto_reconnect=True,
+                flood_sleep_threshold=60,
+                request_retries=10
+            )
+            await telethon_streaming_client.start()
+            print("[Telegram] Dedicated Streaming MTProto client started (receive_updates=False).")
+        except Exception as str_err:
+            print(f"[Telegram Notice] Streaming client fallback: {str_err}")
+            telethon_streaming_client = telethon_client
     else:
         print("[Telegram] Starting MTProto client in BOT MODE...")
         telethon_client = TelegramClient(
@@ -1052,6 +1100,25 @@ async def start_telegram_service():
             request_retries=10
         )
         await telethon_client.start(bot_token=bot_token)
+
+        # Dedicated streaming bot client with independent session & receive_updates=False
+        try:
+            telethon_streaming_client = TelegramClient(
+                STREAM_SESSION_PATH,
+                api_id,
+                api_hash,
+                receive_updates=False,
+                connection_retries=10,
+                retry_delay=1,
+                auto_reconnect=True,
+                flood_sleep_threshold=60,
+                request_retries=10
+            )
+            await telethon_streaming_client.start(bot_token=bot_token)
+            print("[Telegram] Dedicated Streaming MTProto client started (receive_updates=False).")
+        except Exception as str_err:
+            print(f"[Telegram Notice] Streaming client fallback: {str_err}")
+            telethon_streaming_client = telethon_client
 
     me = await telethon_client.get_me()
     is_bot = getattr(me, "bot", False)
@@ -1129,9 +1196,13 @@ async def start_telegram_service():
     return True
 
 async def stop_telegram_service():
-    global telethon_client, scan_task
+    global telethon_client, telethon_streaming_client, scan_task
     if scan_task and not scan_task.done():
         scan_task.cancel()
+    if telethon_streaming_client and telethon_streaming_client.is_connected():
+        if telethon_streaming_client is not telethon_client:
+            await telethon_streaming_client.disconnect()
+        telethon_streaming_client = None
     if telethon_client and telethon_client.is_connected():
         await telethon_client.disconnect()
         telethon_client = None
@@ -1139,22 +1210,31 @@ async def stop_telegram_service():
 async def stream_telegram_file(chat_id: int, message_id: int, offset: int, length: int):
     """
     High-Performance MTProto streaming engine:
-    1. Aligned Block-Based File Retrieval: Slices exact requested bytes on aligned block boundaries.
-    2. Shared 128 MB LRU Block Cache: Delivers cached blocks instantly from RAM (0.01 ms).
-    3. Parallel Block Fetcher: Concurrent MTProto block requests bounded by global & per-stream limits.
-    4. Shared In-Flight Request Deduplication: Prevents duplicate fetches for the same block.
-    5. Priority Scheduler & Seek-Aware Cancellation: Prioritizes immediate playback and purges old prefetch.
-    6. Telegram File Reference Refresh: Automatically recovers from expired file references.
+    1. 1 MB Aligned Block File Retrieval: Slices exact requested bytes on 1 MB quantum boundaries.
+    2. Two-Tiered Hybrid Persistent Cache: RAM (L1) + Disk (L2) with instant rewind & replay.
+    3. Dedicated MTProto Streaming Client: Isolated from channel/bot updates (receive_updates=False).
+    4. Parallel Block Fetcher: Concurrent MTProto block requests bounded by global & per-stream limits.
+    5. Shared In-Flight Deduplication: Prevents duplicate fetches across streams.
+    6. Priority Inversion-Free Scheduler: Urgent playback head requests jump ahead with guaranteed reserved slots.
+    7. Telegram File Reference Refresh: Automatically recovers from expired file references.
     """
-    global telethon_client
-    if not telethon_client or not telethon_client.is_connected():
+    global telethon_client, telethon_streaming_client
+    client = telethon_streaming_client if (telethon_streaming_client and telethon_streaming_client.is_connected()) else telethon_client
+    if not client or not client.is_connected():
         return
 
     async for chunk in streaming_engine.stream_file(
-        client=telethon_client,
+        client=client,
         chat_id=chat_id,
         message_id=message_id,
         offset=offset,
         length=length
     ):
         yield chunk
+
+async def prewarm_telegram_stream(chat_id: int, message_id: int):
+    """Zero cold-start pre-warming of Block 0 & index for upcoming stream playback."""
+    global telethon_client, telethon_streaming_client
+    client = telethon_streaming_client if (telethon_streaming_client and telethon_streaming_client.is_connected()) else telethon_client
+    if client and client.is_connected():
+        await streaming_engine.prewarm_file(client, chat_id, message_id)

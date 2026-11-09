@@ -53,6 +53,10 @@ def parse_stremio_id(item_id: str):
 
 async def init_db():
     async with aiosqlite.connect(DB_FILE) as db:
+        # High-performance SQLite engine pragmas for ultra-low latency concurrent reads
+        await db.execute("PRAGMA journal_mode = WAL")
+        await db.execute("PRAGMA synchronous = NORMAL")
+        await db.execute("PRAGMA cache_size = -64000")  # 64 MB memory cache
         await db.execute("""
             CREATE TABLE IF NOT EXISTS videos (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -461,12 +465,30 @@ async def get_streams_by_id(item_id: str, media_type: str) -> list[dict]:
 
             return unique_videos
 
+_video_location_cache: dict[tuple[int, int], dict] = {}
+
+def invalidate_video_location_cache(chat_id: int | None = None, message_id: int | None = None):
+    if chat_id is not None and message_id is not None:
+        _video_location_cache.pop((chat_id, message_id), None)
+    else:
+        _video_location_cache.clear()
+
 async def get_video_by_location(chat_id: int, message_id: int) -> dict | None:
+    key = (chat_id, message_id)
+    if key in _video_location_cache:
+        return _video_location_cache[key]
+
     async with aiosqlite.connect(DB_FILE) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute("SELECT * FROM videos WHERE chat_id = ? AND message_id = ?", (chat_id, message_id)) as cursor:
             row = await cursor.fetchone()
-            return dict(row) if row else None
+            if row:
+                d = dict(row)
+                if len(_video_location_cache) >= 10000:
+                    _video_location_cache.clear()
+                _video_location_cache[key] = d
+                return d
+            return None
 
 async def get_library_stats() -> dict:
     async with aiosqlite.connect(DB_FILE) as db:
@@ -487,6 +509,7 @@ async def get_library_stats() -> dict:
 
 async def clear_library_database():
     """Wipes indexed videos to allow a clean re-scan."""
+    invalidate_video_location_cache()
     async with aiosqlite.connect(DB_FILE) as db:
         await db.execute("DELETE FROM videos")
         await db.commit()

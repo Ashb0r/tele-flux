@@ -26,6 +26,8 @@ from telegram_client import (
     discover_bot_chats,
     lookup_single_chat,
     stream_telegram_file,
+    prewarm_telegram_stream,
+    get_video_mime_type,
     scan_all_channels,
     clear_and_rescan,
 )
@@ -626,6 +628,11 @@ async def handle_stream(token: str, media_type: str, item_id: str, request: Requ
             "url": play_url
         })
 
+    if videos:
+        # Zero cold start: Pre-warm Block 0 and index in the background while user picks stream
+        first_v = videos[0]
+        asyncio.create_task(prewarm_telegram_stream(first_v["chat_id"], first_v["message_id"]))
+
     return {"streams": streams}
 
 @app.get("/{token}/stream/{media_type}/{item_id}.json")
@@ -656,8 +663,9 @@ async def handle_probe_stream(chat_id: int, message_id: int, filename: str):
     if not video:
         raise HTTPException(status_code=404, detail="Video not found")
 
+    content_type = get_video_mime_type(filename or video.get("file_name", ""), video.get("mime_type", ""))
     headers = {
-        "Content-Type": video["mime_type"] or "video/mp4",
+        "Content-Type": content_type,
         "Content-Length": str(video["file_size"]),
         "Accept-Ranges": "bytes",
         "Access-Control-Allow-Origin": "*",
@@ -672,21 +680,13 @@ async def handle_play_stream(chat_id: int, message_id: int, filename: str, reque
     if not video:
         raise HTTPException(status_code=404, detail="Video not found in library")
 
-    from streaming_engine import streaming_engine
-    from config import STREAM_MAX_ACTIVE_STREAMS
-    if streaming_engine.active_stream_count() >= STREAM_MAX_ACTIVE_STREAMS:
-        raise HTTPException(
-            status_code=503,
-            detail=f"Server busy: maximum active playback sessions reached ({STREAM_MAX_ACTIVE_STREAMS})",
-            headers={"Retry-After": "5"}
-        )
-
     file_size = video["file_size"]
+    content_type = get_video_mime_type(filename or video.get("file_name", ""), video.get("mime_type", ""))
     range_header = request.headers.get("range")
 
     if not range_header:
         headers = {
-            "Content-Type": video["mime_type"] or "video/mp4",
+            "Content-Type": content_type,
             "Content-Length": str(file_size),
             "Accept-Ranges": "bytes",
             "Access-Control-Allow-Origin": "*",
@@ -752,7 +752,7 @@ async def handle_play_stream(chat_id: int, message_id: int, filename: str, reque
         "Content-Range": f"bytes {start}-{end}/{file_size}",
         "Accept-Ranges": "bytes",
         "Content-Length": str(content_length),
-        "Content-Type": video["mime_type"] or "video/mp4",
+        "Content-Type": content_type,
         "Access-Control-Allow-Origin": "*",
         "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
         "Access-Control-Allow-Headers": "*",
