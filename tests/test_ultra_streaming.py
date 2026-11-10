@@ -273,6 +273,49 @@ class UltraStreamingTestSuite:
 
         print("[PASS] Test 8: Multi-Connection MTProto Client Pool (Urgent isolation & worker distribution) verified.")
 
+    # 9. MTProto 512 KB Divisor Alignment on Partial Final Block (Fixes LimitInvalidError)
+    async def test_09_partial_last_block_mtproto_alignment(self):
+        from streaming_engine import ParallelBlockFetcher
+        fetcher = ParallelBlockFetcher()
+
+        mock_doc = MagicMock()
+        mock_doc.id = 1234
+        mock_doc.access_hash = 5678
+        # File with partial last block: 2 full blocks + 123,456 bytes
+        partial_len = 123456
+        mock_doc.size = 2 * STREAM_BLOCK_SIZE_BYTES + partial_len
+
+        recorded_kwargs = {}
+
+        mock_client = MagicMock()
+        mock_client.is_connected = MagicMock(return_value=True)
+        del mock_client.get_client
+
+        async def mock_iter(file, offset=0, **kwargs):
+            recorded_kwargs.update(kwargs)
+            # Telegram returns remaining bytes up to EOF
+            yield b"Z" * partial_len
+
+        mock_client.iter_download = mock_iter
+
+        # Fetch block 2 (the partial final block)
+        data = await fetcher.fetch_block_from_telegram(
+            client=mock_client,
+            doc=mock_doc,
+            chat_id=1,
+            message_id=2,
+            block_idx=2,
+            priority=PRIORITY_URGENT
+        )
+
+        # Telegram request_size MUST be 524,288 (valid 1MB divisor), NEVER the unaligned 123,456!
+        self.assertEqual(recorded_kwargs.get("request_size"), 524288)
+        self.assertEqual(recorded_kwargs.get("chunk_size"), 524288)
+        self.assertEqual(recorded_kwargs.get("limit"), 1)
+        # Returned data must be exact partial length
+        self.assertEqual(len(data), partial_len)
+        print("[PASS] Test 9: Strict MTProto 512 KB Wire Alignment on final/partial blocks (LimitInvalidError prevention) verified.")
+
 
 async def main():
     print("=" * 60)
@@ -289,8 +332,9 @@ async def main():
         await suite.test_06_video_location_cache()
         await suite.test_07_prewarm_stream()
         await suite.test_08_multi_connection_client_pool()
+        await suite.test_09_partial_last_block_mtproto_alignment()
         print("=" * 60)
-        print("  ALL 8 ULTRA-STREAMING TESTS PASSED!")
+        print("  ALL 9 ULTRA-STREAMING TESTS PASSED!")
         print("=" * 60)
     finally:
         await suite.asyncTearDown()

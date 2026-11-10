@@ -778,10 +778,11 @@ class ParallelBlockFetcher:
 
                 chunk_data = bytearray()
 
-                # MTProto chunk request sizing: Telethon's maximum direct chunk size is 524,288 bytes (512 KB)
+                # MTProto chunk sizing: Telegram strictly requires request_size to be a valid 4096-aligned
+                # divisor of 1 MB (524,288 bytes). Even for the final block near EOF (where remaining bytes < 524,288),
+                # request_size must remain 524,288 bytes. Telegram automatically returns the remaining bytes up to EOF.
+                # Requesting non-standard partial lengths violates MTProto wire protocol and triggers LimitInvalidError!
                 mtproto_chunk_size = 524288
-                req_chunk_size = min(expected_length, mtproto_chunk_size)
-                chunks_needed = (expected_length + req_chunk_size - 1) // req_chunk_size
 
                 # Stall watchdog: Urgent playback head gets 3.5s timeout for fast failover; prefetch gets 5.0s
                 chunk_timeout = 3.5 if priority == PRIORITY_URGENT else 5.0
@@ -790,9 +791,9 @@ class ParallelBlockFetcher:
                     async for chunk in active_client.iter_download(
                         location,
                         offset=offset,
-                        chunk_size=req_chunk_size,
-                        request_size=req_chunk_size,
-                        limit=chunks_needed,
+                        chunk_size=mtproto_chunk_size,
+                        request_size=mtproto_chunk_size,
+                        limit=1,
                         file_size=getattr(current_doc, "size", None),
                         dc_id=getattr(current_doc, "dc_id", None)
                     ):
@@ -800,7 +801,7 @@ class ParallelBlockFetcher:
 
                 await asyncio.wait_for(_download_chunks(), timeout=chunk_timeout)
 
-                data = bytes(chunk_data)
+                data = bytes(chunk_data)[:expected_length]
 
                 # Strict Block Integrity Validation: reject truncated chunks
                 if len(data) == expected_length:
